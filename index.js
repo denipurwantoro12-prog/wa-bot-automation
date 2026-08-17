@@ -9,6 +9,9 @@ const client = new Client({
     }
 });
 
+// Fungsi bantuan jeda acak
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 client.on('qr', (qr) => {
     console.log('Scan Kode QR ini menggunakan WhatsApp di HP kamu:');
     qrcode.generate(qr, { small: true });
@@ -18,18 +21,36 @@ client.on('ready', () => {
     console.log('Robot WhatsApp Berhasil Terhubung dan Siap!');
 });
 
-// FITUR BARU: Menerima dan membalas pesan masuk
 client.on('message', async (msg) => {
-    // Cetak isi pesan ke terminal
     console.log(`Pesan dari ${msg.from}: ${msg.body}`);
-
-    // Logika dasar CS otomatis
     const pesan = msg.body.toLowerCase();
 
-    if (pesan === 'ping') {
-        await msg.reply('pong!');
-    } else if (pesan === 'halo' || pesan === 'hai') {
-        await msg.reply('Halo! Selamat datang di layanan Customer Service kami. Ada yang bisa dibantu?');
+    if (pesan === 'ping' || pesan === 'halo' || pesan === 'hai') {
+        try {
+            // Coba pancing status typing
+            try {
+                const chat = await msg.getChat();
+                if (chat) {
+                    await chat.sendStateTyping();
+                    console.log('Status typing berhasil dikirim!');
+                }
+            } catch (typingErr) {
+                console.log('ID pengirim adalah @lid, status typing dilewati demi keamanan.');
+            }
+
+            // Jeda penyamaran 3–5 detik
+            const waktuTunggu = Math.floor(Math.random() * 2000) + 3000;
+            await delay(waktuTunggu);
+
+            // Kirim balasan
+            if (pesan === 'ping') {
+                await msg.reply('pong!');
+            } else {
+                await msg.reply('Halo! Selamat datang di layanan Customer Service kami. Ada yang bisa dibantu?');
+            }
+        } catch (err) {
+            console.error('Gagal mengirim balasan:', err.message);
+        }
     }
 });
 
