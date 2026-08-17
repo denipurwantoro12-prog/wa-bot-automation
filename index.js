@@ -27,14 +27,20 @@ try {
     console.log('File knowledge.json tidak ditemukan, berjalan tanpa data RAG.');
 }
 
-// 2. Logika Rotasi API Key Gemini (Failover)
-const apiKeys = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',');
-let currentKeyIndex = 0;
+// 2. Generator Multimodal Dinamis (Failover, Custom Keys UI, & Fallback Message)
+async function generateMultimodalDinamis(contents, customKeysStr = '', fallbackText = '') {
+    // Utamakan key dari UI form expandable, jika kosong gunakan dari .env
+    let keysToUse = customKeysStr.trim() 
+        ? customKeysStr.split(',') 
+        : (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',');
 
-async function generateMultimodal(contents) {
-    for (let attempt = 0; attempt < apiKeys.length; attempt++) {
+    const defaultFallback = fallbackText.trim() || 'Maaf Kak, CS kami sedang mengalami kendala teknis.';
+
+    for (let attempt = 0; attempt < keysToUse.length; attempt++) {
         try {
-            const activeKey = apiKeys[currentKeyIndex].trim();
+            const activeKey = keysToUse[attempt].trim();
+            if (!activeKey) continue;
+
             const ai = new GoogleGenAI({ apiKey: activeKey });
             const response = await ai.models.generateContent({
                 model: 'gemini-3.1-flash-lite-preview',
@@ -42,10 +48,11 @@ async function generateMultimodal(contents) {
             });
             return response.text;
         } catch (err) {
-            currentKeyIndex = (currentKeyIndex + 1) % apiKeys.length;
+            console.warn(`[API LIMIT/ERROR] Key index ${attempt} bermasalah. Mencoba failover ke key berikutnya...`);
         }
     }
-    return 'Maaf Kak, CS kami sedang mengalami kendala teknis.';
+    // Jika semua API Key bermasalah, kirimkan pesan fallback
+    return defaultFallback;
 }
 
 // 3. Filter Kata Kasar (Toxic Filter)
@@ -133,9 +140,32 @@ app.post('/api/new-chat', async (req, res) => {
     }
 });
 
-// 8. API Broadcast Massal (Fitur Anti-Banned: Jitter + Micro-Breaks)
+// Default Persona & Knowledge jika DB masih kosong
+const DEFAULT_PERSONA = `Kamu adalah Admin Toko yang ramah, sopan, dan sigap.
+Tugasmu adalah membantu pembeli dengan memberikan informasi yang akurat berdasarkan data toko.
+Jawab singkat (2-3 kalimat) dan gunakan bahasa yang mudah dipahami.`;
+
+const DEFAULT_KNOWLEDGE = `Jam Operasional: Senin - Sabtu (08.00 - 17.00 WIB)
+Metode Pembayaran: Transfer Bank, QRIS, COD`;
+
+// Endpoint Ambil Pengaturan Persona & Knowledge
+app.get('/api/settings', (req, res) => {
+    const persona = db.getSetting('persona_prompt') || DEFAULT_PERSONA;
+    const knowledge = db.getSetting('knowledge_base') || DEFAULT_KNOWLEDGE;
+    res.json({ persona, knowledge });
+});
+
+// Endpoint Simpan Pengaturan Persona & Knowledge
+app.post('/api/settings', (req, res) => {
+    const { persona, knowledge } = req.body;
+    if (persona !== undefined) db.saveSetting('persona_prompt', persona);
+    if (knowledge !== undefined) db.saveSetting('knowledge_base', knowledge);
+    res.json({ success: true, message: 'Pengaturan Persona & Knowledge Base berhasil disimpan!' });
+});
+
+// 8. API Broadcast Massal (Mendukung Custom API Keys, Fallback Message, & Anti-Banned Jitter)
 app.post('/api/broadcast', async (req, res) => {
-    const { draft, prompt, numbers, scheduledTime } = req.body;
+    const { draft, prompt, numbers, scheduledTime, customKeys, fallbackMsg } = req.body;
     
     if (scheduledTime) {
         db.saveScheduledBroadcast(draft, prompt, JSON.stringify(numbers), scheduledTime);
@@ -153,7 +183,13 @@ app.post('/api/broadcast', async (req, res) => {
         if (contact && contact.is_blacklisted) continue;
 
         const promptBroadcast = prompts.getBroadcastPrompt(draft, prompt);
-        const pesanUnik = await generateMultimodal(promptBroadcast);
+        
+        // Memakai generator dinamis (Teks pesan otomatis menggunakan fallbackMsg/draft jika AI limit total)
+        const pesanUnik = await generateMultimodalDinamis(
+            promptBroadcast, 
+            customKeys || '', 
+            fallbackMsg || draft
+        );
 
         try {
             await client.sendMessage(jid, pesanUnik);
@@ -191,7 +227,7 @@ cron.schedule('* * * * *', async () => {
             if (contact && contact.is_blacklisted) continue;
 
             const promptBroadcast = prompts.getBroadcastPrompt(job.draft, job.prompt);
-            const pesanUnik = await generateMultimodal(promptBroadcast);
+            const pesanUnik = await generateMultimodalDinamis(promptBroadcast, '', job.draft);
 
             try {
                 await client.sendMessage(jid, pesanUnik);
@@ -275,11 +311,25 @@ client.on('message', async (msg) => {
         } catch (e) {}
 
         const riwayatChat = db.getMessages(jid).slice(-6);
-        const csPromptText = prompts.getCsPrompt(knowledgeData, riwayatChat, text);
-        promptContents.push(csPromptText);
+        // Ambil Persona & Knowledge terbaru dari database SQLite secara dinamis
+        const currentPersona = db.getSetting('persona_prompt') || DEFAULT_PERSONA;
+        const currentKnowledge = db.getSetting('knowledge_base') || DEFAULT_KNOWLEDGE;
+
+        const dynamicPrompt = `${currentPersona}
+
+--- DATA KNOWLEDGE BASE TOKO ---
+${currentKnowledge}
+---------------------------------
+
+Riwayat Chat Sebelumnya:
+${riwayatChat.map(m => `${m.sender}: ${m.message}`).join('\n')}
+
+Pembeli: ${text}`;
+
+        promptContents.push(dynamicPrompt);
 
         const [jawabanAI] = await Promise.all([
-            generateMultimodal(promptContents),
+            generateMultimodalDinamis(promptContents),
             delay(3000)
         ]);
 
