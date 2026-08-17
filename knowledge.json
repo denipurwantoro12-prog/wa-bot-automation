@@ -1,0 +1,11 @@
+{
+  "nama_toko": "Toko Online Serba Ada",
+  "jam_operasional": "Senin - Sabtu (08:00 - 20:00 WIB), Minggu Libur",
+  "lokasi_toko": "Jl. Utama No. 123, Jakarta Selatan",
+  "metode_pembayaran": "BCA, Mandiri, QRIS, dan COD",
+  "kebijakan_garansi": "Garansi retur 7 hari jika barang cacat produksi wajib melampirkan video unboxing.",
+  "katalog_produk": [
+    { "nama": "Kaos Polos Cotton Combed 30s", "harga": "Rp 45.000", "stok": "Tersedia (S, M, L, XL)" },
+    { "nama": "Kemeja Flanel Premium", "harga": "Rp 120.000", "stok": "Tersedia" }
+  ]
+}
