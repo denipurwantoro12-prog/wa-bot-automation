@@ -1,5 +1,9 @@
+require('dotenv').config();
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
+const { GoogleGenAI } = require('@google/genai');
+
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 const client = new Client({
     authStrategy: new LocalAuth({ dataPath: './sessions' }),
@@ -9,8 +13,23 @@ const client = new Client({
     }
 });
 
-// Fungsi bantuan jeda acak
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Memori untuk menyimpan daftar nomor yang beralih ke CS Manusia
+const handoverUsers = new Set();
+
+async function jawabDenganAI(pesanUser) {
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-3.1-flash-lite-preview', // Model Gemini pilihanmu!
+            contents: `Kamu adalah Customer Service toko online yang sangat ramah, sopan, dan sigap. Jawab pertanyaan pembeli berikut dengan singkat dan jelas (maksimal 2-3 kalimat):\n\nPembeli: ${pesanUser}`
+        });
+        return response.text;
+    } catch (err) {
+        console.error('Error AI:', err.message);
+        return 'Maaf Kak, sistem CS kami sedang mengalami kendala teknis singkat. Boleh tanyakan lagi nanti?';
+    }
+}
 
 client.on('qr', (qr) => {
     console.log('Scan Kode QR ini menggunakan WhatsApp di HP kamu:');
@@ -18,39 +37,45 @@ client.on('qr', (qr) => {
 });
 
 client.on('ready', () => {
-    console.log('Robot WhatsApp Berhasil Terhubung dan Siap!');
+    console.log('Robot WhatsApp + AI CS Berhasil Terhubung dan Siap!');
 });
 
 client.on('message', async (msg) => {
     console.log(`Pesan dari ${msg.from}: ${msg.body}`);
-    const pesan = msg.body.toLowerCase();
 
-    if (pesan === 'ping' || pesan === 'halo' || pesan === 'hai') {
+    if (msg.from.includes('@g.us') || msg.isStatus) return;
+
+    const pesanTeks = msg.body.toLowerCase();
+
+    // 1. Cek apakah pengguna minta bicara dengan admin manusia
+    if (pesanTeks.includes('admin') || pesanTeks.includes('human') || pesanTeks.includes('operator')) {
+        handoverUsers.add(msg.from);
+        console.log(`[HANDOVER] Nomor ${msg.from} dialihkan ke Admin Manusia.`);
+        await msg.reply('Baik Kak, pesan Kakak sudah kami teruskan ke Admin Manusia. Mohon tunggu sebentar ya, Admin akan segera membalas secara manual.');
+        return;
+    }
+
+    // 2. Cek apakah nomor ini sedang ditangani Admin Manusia (jika ya, bot diam)
+    if (handoverUsers.has(msg.from)) {
+        console.log(`[IGNORED] Pesan dari ${msg.from} diabaikan karena sedang ditangani Admin Manusia.`);
+        return;
+    }
+
+    // 3. Jika tidak, jawab menggunakan AI
+    try {
         try {
-            // Coba pancing status typing
-            try {
-                const chat = await msg.getChat();
-                if (chat) {
-                    await chat.sendStateTyping();
-                    console.log('Status typing berhasil dikirim!');
-                }
-            } catch (typingErr) {
-                console.log('ID pengirim adalah @lid, status typing dilewati demi keamanan.');
-            }
+            const chat = await msg.getChat();
+            if (chat) await chat.sendStateTyping();
+        } catch (e) {}
 
-            // Jeda penyamaran 3–5 detik
-            const waktuTunggu = Math.floor(Math.random() * 2000) + 3000;
-            await delay(waktuTunggu);
+        const [jawabanAI] = await Promise.all([
+            jawabDenganAI(msg.body),
+            delay(3000)
+        ]);
 
-            // Kirim balasan
-            if (pesan === 'ping') {
-                await msg.reply('pong!');
-            } else {
-                await msg.reply('Halo! Selamat datang di layanan Customer Service kami. Ada yang bisa dibantu?');
-            }
-        } catch (err) {
-            console.error('Gagal mengirim balasan:', err.message);
-        }
+        await msg.reply(jawabanAI);
+    } catch (err) {
+        console.error('Gagal membalas pesan:', err.message);
     }
 });
 
