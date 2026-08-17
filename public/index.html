@@ -21,6 +21,28 @@
             flex-direction: column; 
         }
         
+        /* BANNER PERINGATAN API LIMIT */
+        .alert-banner {
+            display: none;
+            background-color: #ef4444;
+            color: #ffffff;
+            padding: 10px 20px;
+            font-weight: bold;
+            font-size: 0.85rem;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #dc2626;
+            z-index: 1100;
+        }
+
+        .alert-banner button {
+            background: none;
+            border: none;
+            color: #fff;
+            font-size: 1.1rem;
+            cursor: pointer;
+        }
+
         .nav-tabs { 
             display: flex; 
             background-color: #111b21; 
@@ -264,6 +286,7 @@
             padding: 10px; 
             border-radius: 6px; 
             outline: none; 
+            resize: vertical;
         }
 
         .btn-action { 
@@ -352,6 +375,12 @@
 </head>
 <body>
 
+    <!-- BANNER WARN APILIMIT -->
+    <div id="api-limit-alert" class="alert-banner">
+        <span id="alert-text">⚠️ PERINGATAN: Semua API Key Gemini Limit/Error! Sistem beralih ke Pesan Fallback.</span>
+        <button onclick="hideApiAlert()">✕</button>
+    </div>
+
     <div class="nav-tabs">
         <div class="tab-group">
             <button class="tab-btn active" onclick="switchTab('chat')">💬 Live Chat Panel</button>
@@ -386,14 +415,34 @@
     <div id="tab-broadcast" class="tab-content">
         <div class="broadcast-container">
             <h2 style="margin-bottom: 20px; color: #00a884;">Broadcast AI Studio</h2>
+            
             <div class="form-group">
                 <label>Draf Pesan Utama</label>
                 <textarea id="draft" rows="3" placeholder="Contoh: Halo Kak! Ada diskon khusus hari ini."></textarea>
             </div>
+
+            <!-- GAYA BAHASA AI PROMPT (EXPANDABLE TEXTAREA) -->
             <div class="form-group">
-                <label>Gaya Bahasa AI Prompt</label>
-                <input type="text" id="prompt" placeholder="Contoh: Buat ramah, kasual, dan beri emoticon">
+                <label>Gaya Bahasa AI Prompt (Instruksi Khusus AI)</label>
+                <textarea id="prompt" rows="3" placeholder="Contoh: Buat ramah, kasual, selipkan emoticon, dan pastikan ajak pembeli balas pesan ini."></textarea>
             </div>
+
+            <!-- FORM EXPANDABLE: PENGATURAN API & FALLBACK -->
+            <details style="background: #202c33; border: 1px solid #2a3942; border-radius: 6px; padding: 12px; margin-bottom: 15px;">
+                <summary style="font-weight: bold; color: #00a884; font-size: 0.85rem; cursor: pointer;">⚙️ Pengaturan AI Lanjutan (Cadangan API Keys & Fallback)</summary>
+                <div style="margin-top: 15px; display: flex; flex-direction: column; gap: 12px;">
+                    <div class="form-group" style="margin: 0;">
+                        <label>Cadangan API Keys Gemini (Pisahkan dengan koma)</label>
+                        <input type="text" id="custom-keys" placeholder="AIzaSy1..., AIzaSy2..., AIzaSy3...">
+                        <span style="font-size: 0.7rem; color: #8696a0;">Spasi setelah koma tidak masalah (otomatis dirapikan)</span>
+                    </div>
+                    <div class="form-group" style="margin: 0;">
+                        <label>Pesan Fallback (Teks Asli Jika API Limit/Error Total)</label>
+                        <textarea id="fallback-msg" rows="2" placeholder="Biarkan kosong jika ingin menggunakan Draf Pesan Utama..."></textarea>
+                    </div>
+                </div>
+            </details>
+
             <div class="form-group">
                 <label>Nomor Tujuan (1 nomor per baris, format 628xxx)</label>
                 <textarea id="numbers" rows="4" placeholder="628123456789&#10;628987654321"></textarea>
@@ -434,6 +483,16 @@
         let selectedJid = null;
         let contactsData = [];
 
+        function showApiAlert(msg) {
+            const banner = document.getElementById('api-limit-alert');
+            if (msg) document.getElementById('alert-text').innerText = msg;
+            banner.style.display = 'flex';
+        }
+
+        function hideApiAlert() {
+            document.getElementById('api-limit-alert').style.display = 'none';
+        }
+
         function switchTab(tab) {
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
@@ -447,9 +506,12 @@
         }
 
         socket.on('connect', () => socket.emit('get_contacts'));
-
         socket.on('contacts_list', renderContacts);
         socket.on('contacts_updated', renderContacts);
+
+        socket.on('api_limit_warning', (data) => {
+            showApiAlert(data.message);
+        });
 
         function renderContacts(contacts) {
             contactsData = contacts;
@@ -581,6 +643,8 @@
             const prompt = document.getElementById('prompt').value;
             const numbers = document.getElementById('numbers').value.split('\n').filter(n => n.trim());
             const scheduledTime = document.getElementById('schedule-time').value;
+            const customKeys = document.getElementById('custom-keys').value;
+            const fallbackMsg = document.getElementById('fallback-msg').value;
 
             if (!draft || numbers.length === 0) {
                 alert('Draf pesan dan nomor tujuan wajib diisi!');
@@ -589,13 +653,17 @@
 
             document.getElementById('bc-status').innerText = 'Mengolah AI & memproses broadcast...';
 
-            const res = await fetch('/api/broadcast', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ draft, prompt, numbers, scheduledTime })
-            });
-            const data = await res.json();
-            document.getElementById('bc-status').innerText = data.message;
+            try {
+                const res = await fetch('/api/broadcast', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ draft, prompt, numbers, scheduledTime, customKeys, fallbackMsg })
+                });
+                const data = await res.json();
+                document.getElementById('bc-status').innerText = data.message;
+            } catch (err) {
+                document.getElementById('bc-status').innerText = 'Gagal memproses broadcast.';
+            }
         }
     </script>
 </body>
