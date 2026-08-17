@@ -1,7 +1,12 @@
 require('dotenv').config();
+const express = require('express');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const { GoogleGenAI } = require('@google/genai');
+
+const app = express();
+app.use(express.json());
+app.use(express.static('public')); // Membuka folder UI public
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -14,69 +19,88 @@ const client = new Client({
 });
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-// Memori untuk menyimpan daftar nomor yang beralih ke CS Manusia
 const handoverUsers = new Set();
 
+// 1. Fungsi CS Otomatis
 async function jawabDenganAI(pesanUser) {
     try {
         const response = await ai.models.generateContent({
-            model: 'gemini-3.1-flash-lite-preview', // Model Gemini pilihanmu!
+            model: 'gemini-3.1-flash-lite-preview',
             contents: `Kamu adalah Customer Service toko online yang sangat ramah, sopan, dan sigap. Jawab pertanyaan pembeli berikut dengan singkat dan jelas (maksimal 2-3 kalimat):\n\nPembeli: ${pesanUser}`
         });
         return response.text;
     } catch (err) {
-        console.error('Error AI:', err.message);
-        return 'Maaf Kak, sistem CS kami sedang mengalami kendala teknis singkat. Boleh tanyakan lagi nanti?';
+        return 'Maaf Kak, sistem CS kami sedang mengalami kendala teknis.';
     }
 }
 
-client.on('qr', (qr) => {
-    console.log('Scan Kode QR ini menggunakan WhatsApp di HP kamu:');
-    qrcode.generate(qr, { small: true });
+// 2. Fungsi Generator Variasi Broadcast AI
+async function buatVariasiBroadcast(draft, instruksi) {
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-3.1-flash-lite-preview',
+            contents: `Ubah draf pesan berikut menjadi 1 variasi kalimat unik sesuai instruksi.\nInstruksi: ${instruksi}\nDraf Teks: ${draft}\n\nKeluarkan HANYA hasil teks pesan akhirnya saja tanpa kata pengantar.`
+        });
+        return response.text;
+    } catch (err) {
+        return draft; // Jika AI error, gunakan teks draf asli
+    }
+}
+
+// 3. API Endpoint untuk Menerima Broadcast dari Web UI
+app.post('/api/broadcast', async (req, res) => {
+    const { draft, prompt, numbers } = req.body;
+    console.log(`[BROADCAST] Memproses ${numbers.length} nomor tujuan...`);
+
+    // Kirim respon cepat ke UI bahwa proses dimulai
+    res.json({ message: `Proses broadcast ke ${numbers.length} nomor dimulai di latar belakang!` });
+
+    for (let target of numbers) {
+        let nomorFormatted = target.trim();
+        if (!nomorFormatted.endsWith('@c.us')) {
+            nomorFormatted = `${nomorFormatted}@c.us`;
+        }
+
+        // Bikin variasi teks unik via Gemini
+        const pesanUnik = await buatVariasiBroadcast(draft, prompt);
+        console.log(`[SENDING] Ke ${nomorFormatted}: "${pesanUnik}"`);
+
+        try {
+            await client.sendMessage(nomorFormatted, pesanUnik);
+        } catch (err) {
+            console.error(`Gagal kirim ke ${nomorFormatted}:`, err.message);
+        }
+
+        // Jeda stealth 5-10 detik antar pengiriman pesan broadcast
+        const jedaBroadcast = Math.floor(Math.random() * 5000) + 5000;
+        await delay(jedaBroadcast);
+    }
+
+    console.log('[BROADCAST] Semua pesan broadcast selesai dikirim!');
 });
 
-client.on('ready', () => {
-    console.log('Robot WhatsApp + AI CS Berhasil Terhubung dan Siap!');
-});
+// Listener WhatsApp
+client.on('qr', (qr) => qrcode.generate(qr, { small: true }));
+client.on('ready', () => console.log('Robot WhatsApp + Web UI Siap!'));
 
 client.on('message', async (msg) => {
-    console.log(`Pesan dari ${msg.from}: ${msg.body}`);
-
     if (msg.from.includes('@g.us') || msg.isStatus) return;
-
     const pesanTeks = msg.body.toLowerCase();
 
-    // 1. Cek apakah pengguna minta bicara dengan admin manusia
-    if (pesanTeks.includes('admin') || pesanTeks.includes('human') || pesanTeks.includes('operator')) {
+    if (pesanTeks.includes('admin') || pesanTeks.includes('human')) {
         handoverUsers.add(msg.from);
-        console.log(`[HANDOVER] Nomor ${msg.from} dialihkan ke Admin Manusia.`);
-        await msg.reply('Baik Kak, pesan Kakak sudah kami teruskan ke Admin Manusia. Mohon tunggu sebentar ya, Admin akan segera membalas secara manual.');
+        await msg.reply('Baik Kak, pesan diteruskan ke Admin Manusia.');
         return;
     }
 
-    // 2. Cek apakah nomor ini sedang ditangani Admin Manusia (jika ya, bot diam)
-    if (handoverUsers.has(msg.from)) {
-        console.log(`[IGNORED] Pesan dari ${msg.from} diabaikan karena sedang ditangani Admin Manusia.`);
-        return;
-    }
+    if (handoverUsers.has(msg.from)) return;
 
-    // 3. Jika tidak, jawab menggunakan AI
     try {
-        try {
-            const chat = await msg.getChat();
-            if (chat) await chat.sendStateTyping();
-        } catch (e) {}
-
-        const [jawabanAI] = await Promise.all([
-            jawabDenganAI(msg.body),
-            delay(3000)
-        ]);
-
+        const [jawabanAI] = await Promise.all([jawabDenganAI(msg.body), delay(3000)]);
         await msg.reply(jawabanAI);
-    } catch (err) {
-        console.error('Gagal membalas pesan:', err.message);
-    }
+    } catch (err) {}
 });
 
+// Jalankan Web Server di Port 3000 & WhatsApp Bot
+app.listen(3000, () => console.log('Web UI Dashboard berjalan di http://localhost:3000'));
 client.initialize();

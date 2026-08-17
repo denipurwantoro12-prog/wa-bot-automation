@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Broadcast AI Dashboard</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        body {
+            background-color: #0b141a;
+            color: #e9edef;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .dashboard-card {
+            background-color: #111b21;
+            border: 1px solid #222d34;
+            border-radius: 16px;
+            width: 100%;
+            max-width: 540px;
+            padding: 28px;
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid #222d34;
+        }
+
+        .header-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .header-title h2 {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #e9edef;
+        }
+
+        .badge {
+            background-color: rgba(0, 168, 132, 0.12);
+            color: #00a884;
+            border: 1px solid rgba(0, 168, 132, 0.25);
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .badge-dot {
+            width: 6px;
+            height: 6px;
+            background-color: #00a884;
+            border-radius: 50%;
+        }
+
+        .form-group {
+            margin-bottom: 18px;
+        }
+
+        label {
+            display: block;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #8696a0;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        textarea, input[type="text"] {
+            width: 100%;
+            background-color: #202c33;
+            border: 1px solid #2a3942;
+            border-radius: 10px;
+            color: #e9edef;
+            padding: 12px 14px;
+            font-size: 0.92rem;
+            outline: none;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        textarea:focus, input[type="text"]:focus {
+            border-color: #00a884;
+            box-shadow: 0 0 0 2px rgba(0, 168, 132, 0.2);
+        }
+
+        textarea::placeholder, input::placeholder {
+            color: #667781;
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 85px;
+        }
+
+        .btn-send {
+            width: 100%;
+            background-color: #00a884;
+            color: #111b21;
+            border: none;
+            border-radius: 10px;
+            padding: 13px;
+            font-size: 0.95rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: background-color 0.2s ease, transform 0.1s ease;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .btn-send:hover {
+            background-color: #029071;
+        }
+
+        .btn-send:active {
+            transform: scale(0.99);
+        }
+
+        .status-box {
+            margin-top: 18px;
+            padding: 12px 14px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            display: none;
+            border: 1px solid transparent;
+        }
+
+        .status-box.active {
+            display: block;
+            background-color: #182229;
+            border-color: #2a3942;
+            color: #d1d7db;
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard-card">
+        <div class="header">
+            <div class="header-title">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="#00a884"><path d="M12.04 2c-5.46 0-9.91 4.45-9.91 9.91 0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38c1.45.79 3.08 1.21 4.74 1.21 5.46 0 9.91-4.45 9.91-9.91 0-2.65-1.03-5.14-2.9-7.01A9.816 9.816 0 0 0 12.04 2z"/></svg>
+                <h2>Broadcast AI Studio</h2>
+            </div>
+            <div class="badge">
+                <span class="badge-dot"></span> System Ready
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label for="draft">Draf Pesan Utama</label>
+            <textarea id="draft" rows="3" placeholder="Contoh: Halo! Kami ada promo diskon 20% khusus hari ini."></textarea>
+        </div>
+
+        <div class="form-group">
+            <label for="prompt">Instruksi Gaya Bahasa (AI Prompt)</label>
+            <input type="text" id="prompt" placeholder="Contoh: Gaya santai, ramah, selipkan emoticon">
+        </div>
+
+        <div class="form-group">
+            <label for="numbers">Nomor Tujuan (1 nomor per baris)</label>
+            <textarea id="numbers" rows="4" placeholder="628123456789&#10;628987654321"></textarea>
+        </div>
+
+        <button class="btn-send" onclick="kirimBroadcast()">
+            🚀 Kirim Broadcast Massal
+        </button>
+
+        <div id="status" class="status-box"></div>
+    </div>
+
+    <script>
+        async function kirimBroadcast() {
+            const draft = document.getElementById('draft').value;
+            const prompt = document.getElementById('prompt').value;
+            const numbers = document.getElementById('numbers').value.split('\n').filter(n => n.trim() !== '');
+            const statusDiv = document.getElementById('status');
+
+            if (!draft || numbers.length === 0) {
+                alert('Draf pesan dan nomor tujuan wajib diisi!');
+                return;
+            }
+
+            statusDiv.className = 'status-box active';
+            statusDiv.innerText = '⏳ Mengolah AI & mengirimkan antrean pesan di latar belakang...';
+
+            try {
+                const response = await fetch('/api/broadcast', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ draft, prompt, numbers })
+                });
+
+                const result = await response.json();
+                statusDiv.innerText = `✅ ${result.message}`;
+            } catch (err) {
+                statusDiv.innerText = '❌ Gagal terhubung ke server broadcast.';
+            }
+        }
+    </script>
+</body>
+</html>
