@@ -257,15 +257,16 @@
             cursor: pointer; 
         }
 
-        /* BROADCAST STUDIO */
+        /* BROADCAST & SETTINGS CONTAINER */
         .broadcast-container { 
-            max-width: 600px; 
+            max-width: 650px; 
             margin: 30px auto; 
             width: 100%; 
             background: #111b21; 
             padding: 25px; 
             border-radius: 12px; 
             border: 1px solid #222d34; 
+            overflow-y: auto;
         }
 
         .form-group { margin-bottom: 15px; }
@@ -375,16 +376,18 @@
 </head>
 <body>
 
-    <!-- BANNER WARN APILIMIT -->
+    <!-- BANNER WARNING API LIMIT -->
     <div id="api-limit-alert" class="alert-banner">
         <span id="alert-text">⚠️ PERINGATAN: Semua API Key Gemini Limit/Error! Sistem beralih ke Pesan Fallback.</span>
         <button onclick="hideApiAlert()">✕</button>
     </div>
 
+    <!-- NAV TABS MENU -->
     <div class="nav-tabs">
         <div class="tab-group">
             <button class="tab-btn active" onclick="switchTab('chat')">💬 Live Chat Panel</button>
             <button class="tab-btn" onclick="switchTab('broadcast')">🚀 Broadcast AI Studio</button>
+            <button class="tab-btn" onclick="switchTab('settings')">🧠 Persona & Knowledge</button>
         </div>
         <button class="btn-export" onclick="window.location.href='/api/export-contacts'">📥 Export Contacts CSV</button>
     </div>
@@ -424,7 +427,7 @@
             <!-- GAYA BAHASA AI PROMPT (EXPANDABLE TEXTAREA) -->
             <div class="form-group">
                 <label>Gaya Bahasa AI Prompt (Instruksi Khusus AI)</label>
-                <textarea id="prompt" rows="3" placeholder="Contoh: Buat ramah, kasual, selipkan emoticon, dan pastikan ajak pembeli balas pesan ini."></textarea>
+                <textarea id="prompt" rows="3" placeholder="Contoh: Buat ramah, kasual, selipkan emoticon, dan ajak pembeli balas pesan ini."></textarea>
             </div>
 
             <!-- FORM EXPANDABLE: PENGATURAN API & FALLBACK -->
@@ -453,6 +456,28 @@
             </div>
             <button class="btn-action" onclick="sendBroadcast()">Kirim / Jadwalkan Broadcast</button>
             <p id="bc-status" style="margin-top: 10px; font-size: 0.85rem; color: #00a884;"></p>
+        </div>
+    </div>
+
+    <!-- TAB 3: PERSONA CS & KNOWLEDGE BASE -->
+    <div id="tab-settings" class="tab-content">
+        <div class="broadcast-container" style="max-width: 750px;">
+            <h2 style="margin-bottom: 20px; color: #00a884;">🧠 Pengaturan Persona & Knowledge Base</h2>
+            
+            <div class="form-group">
+                <label>System Prompt Persona (Siapa AI ini & Gaya Bicaranya)</label>
+                <textarea id="setting-persona" rows="6" placeholder="Contoh: Kamu adalah Admin Toko Bangunan Jaya Sentosa. Ramah, solutif, paham bahan bangunan..."></textarea>
+                <span style="font-size: 0.72rem; color: #8696a0;">Instruksi ini menentukan peran, karakter, dan batasan balasan bot CS.</span>
+            </div>
+
+            <div class="form-group">
+                <label>Data Knowledge Base Toko (Katalog, Harga, Stok, Kebijakan Toko)</label>
+                <textarea id="setting-knowledge" rows="10" placeholder="Masukkan daftar barang, harga, jam operasional, alamat toko, dll..."></textarea>
+                <span style="font-size: 0.72rem; color: #8696a0;">Format bebas (Teks biasa/JSON). Bot akan menjawab pertanyaan pembeli berdasarkan data ini.</span>
+            </div>
+
+            <button class="btn-action" onclick="saveSettings()">💾 Simpan Perubahan</button>
+            <p id="settings-status" style="margin-top: 10px; font-size: 0.85rem; color: #00a884;"></p>
         </div>
     </div>
 
@@ -496,12 +521,16 @@
         function switchTab(tab) {
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            
             if(tab === 'chat') {
                 document.querySelectorAll('.tab-btn')[0].classList.add('active');
                 document.getElementById('tab-chat').classList.add('active');
-            } else {
+            } else if(tab === 'broadcast') {
                 document.querySelectorAll('.tab-btn')[1].classList.add('active');
                 document.getElementById('tab-broadcast').classList.add('active');
+            } else if(tab === 'settings') {
+                document.querySelectorAll('.tab-btn')[2].classList.add('active');
+                document.getElementById('tab-settings').classList.add('active');
             }
         }
 
@@ -665,6 +694,45 @@
                 document.getElementById('bc-status').innerText = 'Gagal memproses broadcast.';
             }
         }
+
+        /* FUNGSI LOAD & SAVE PENGATURAN PERSONA / KNOWLEDGE */
+        async function loadSettings() {
+            try {
+                const res = await fetch('/api/settings');
+                const data = await res.json();
+                if (document.getElementById('setting-persona')) {
+                    document.getElementById('setting-persona').value = data.persona || '';
+                }
+                if (document.getElementById('setting-knowledge')) {
+                    document.getElementById('setting-knowledge').value = data.knowledge || '';
+                }
+            } catch (err) {
+                console.error('Gagal memuat pengaturan:', err);
+            }
+        }
+
+        async function saveSettings() {
+            const persona = document.getElementById('setting-persona').value;
+            const knowledge = document.getElementById('setting-knowledge').value;
+            const statusEl = document.getElementById('settings-status');
+
+            statusEl.innerText = 'Menyimpan...';
+
+            try {
+                const res = await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ persona, knowledge })
+                });
+                const data = await res.json();
+                statusEl.innerText = data.message;
+            } catch (err) {
+                statusEl.innerText = 'Gagal menyimpan pengaturan.';
+            }
+        }
+
+        // Muat data pengaturan saat halaman selesai dibuka
+        window.addEventListener('DOMContentLoaded', loadSettings);
     </script>
 </body>
 </html>

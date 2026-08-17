@@ -140,6 +140,29 @@ app.post('/api/new-chat', async (req, res) => {
     }
 });
 
+// Default Persona & Knowledge jika DB masih kosong
+const DEFAULT_PERSONA = `Kamu adalah Admin Toko yang ramah, sopan, dan sigap.
+Tugasmu adalah membantu pembeli dengan memberikan informasi yang akurat berdasarkan data toko.
+Jawab singkat (2-3 kalimat) dan gunakan bahasa yang mudah dipahami.`;
+
+const DEFAULT_KNOWLEDGE = `Jam Operasional: Senin - Sabtu (08.00 - 17.00 WIB)
+Metode Pembayaran: Transfer Bank, QRIS, COD`;
+
+// Endpoint Ambil Pengaturan Persona & Knowledge
+app.get('/api/settings', (req, res) => {
+    const persona = db.getSetting('persona_prompt') || DEFAULT_PERSONA;
+    const knowledge = db.getSetting('knowledge_base') || DEFAULT_KNOWLEDGE;
+    res.json({ persona, knowledge });
+});
+
+// Endpoint Simpan Pengaturan Persona & Knowledge
+app.post('/api/settings', (req, res) => {
+    const { persona, knowledge } = req.body;
+    if (persona !== undefined) db.saveSetting('persona_prompt', persona);
+    if (knowledge !== undefined) db.saveSetting('knowledge_base', knowledge);
+    res.json({ success: true, message: 'Pengaturan Persona & Knowledge Base berhasil disimpan!' });
+});
+
 // 8. API Broadcast Massal (Mendukung Custom API Keys, Fallback Message, & Anti-Banned Jitter)
 app.post('/api/broadcast', async (req, res) => {
     const { draft, prompt, numbers, scheduledTime, customKeys, fallbackMsg } = req.body;
@@ -288,8 +311,22 @@ client.on('message', async (msg) => {
         } catch (e) {}
 
         const riwayatChat = db.getMessages(jid).slice(-6);
-        const csPromptText = prompts.getCsPrompt(knowledgeData, riwayatChat, text);
-        promptContents.push(csPromptText);
+        // Ambil Persona & Knowledge terbaru dari database SQLite secara dinamis
+        const currentPersona = db.getSetting('persona_prompt') || DEFAULT_PERSONA;
+        const currentKnowledge = db.getSetting('knowledge_base') || DEFAULT_KNOWLEDGE;
+
+        const dynamicPrompt = `${currentPersona}
+
+--- DATA KNOWLEDGE BASE TOKO ---
+${currentKnowledge}
+---------------------------------
+
+Riwayat Chat Sebelumnya:
+${riwayatChat.map(m => `${m.sender}: ${m.message}`).join('\n')}
+
+Pembeli: ${text}`;
+
+        promptContents.push(dynamicPrompt);
 
         const [jawabanAI] = await Promise.all([
             generateMultimodalDinamis(promptContents),
