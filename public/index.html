@@ -6,59 +6,373 @@
     <title>WhatsApp Web Admin & Broadcast Studio</title>
     <script src="/socket.io/socket.io.js"></script>
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-        body { background-color: #0b141a; color: #e9edef; height: 100vh; display: flex; flex-direction: column; }
-        
-        .nav-tabs { display: flex; background-color: #111b21; border-bottom: 1px solid #222d34; padding: 0 20px; }
-        .tab-btn { background: none; border: none; color: #8696a0; padding: 15px 25px; font-weight: 600; cursor: pointer; font-size: 0.95rem; }
-        .tab-btn.active { color: #00a884; border-bottom: 3px solid #00a884; }
+        * { 
+            box-sizing: border-box; 
+            margin: 0; 
+            padding: 0; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+        }
 
-        .tab-content { display: none; flex: 1; height: calc(100vh - 53px); }
-        .tab-content.active { display: flex; }
+        body { 
+            background-color: #0b141a; 
+            color: #e9edef; 
+            height: 100vh; 
+            display: flex; 
+            flex-direction: column; 
+        }
+        
+        .nav-tabs { 
+            display: flex; 
+            background-color: #111b21; 
+            border-bottom: 1px solid #222d34; 
+            padding: 0 20px; 
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .tab-group {
+            display: flex;
+        }
+
+        .tab-btn { 
+            background: none; 
+            border: none; 
+            color: #8696a0; 
+            padding: 15px 25px; 
+            font-weight: 600; 
+            cursor: pointer; 
+            font-size: 0.95rem; 
+        }
+
+        .tab-btn.active { 
+            color: #00a884; 
+            border-bottom: 3px solid #00a884; 
+        }
+
+        .btn-export {
+            background-color: #202c33;
+            color: #00a884;
+            border: 1px solid #00a884;
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s ease;
+        }
+
+        .btn-export:hover {
+            background-color: #00a884;
+            color: #111b21;
+        }
+
+        .tab-content { 
+            display: none; 
+            flex: 1; 
+            height: calc(100vh - 53px); 
+        }
+
+        .tab-content.active { 
+            display: flex; 
+        }
 
         /* LIVE CHAT PANEL */
-        .chat-sidebar { width: 320px; background-color: #111b21; border-right: 1px solid #222d34; overflow-y: auto; }
-        .contact-item { padding: 15px; border-bottom: 1px solid #222d34; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
-        .contact-item:hover, .contact-item.active { background-color: #202c33; }
-        .badge-tag { font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; font-weight: bold; }
+        .chat-sidebar { 
+            width: 340px; 
+            background-color: #111b21; 
+            border-right: 1px solid #222d34; 
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-header {
+            padding: 12px 15px;
+            background-color: #202c33;
+            border-bottom: 1px solid #222d34;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .btn-new-chat {
+            background-color: #00a884;
+            color: #111b21;
+            border: none;
+            padding: 7px 12px;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 0.82rem;
+            transition: background-color 0.2s ease;
+        }
+
+        .btn-new-chat:hover {
+            background-color: #029071;
+        }
+
+        .contacts-scroll {
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        .contact-item { 
+            padding: 15px; 
+            border-bottom: 1px solid #222d34; 
+            cursor: pointer; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+        }
+
+        .contact-item:hover, .contact-item.active { 
+            background-color: #202c33; 
+        }
+
+        .contact-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .contact-tags {
+            display: flex;
+            gap: 4px;
+            align-items: center;
+        }
+
+        .badge-tag { 
+            font-size: 0.68rem; 
+            padding: 2px 6px; 
+            border-radius: 4px; 
+            font-weight: bold; 
+        }
+
         .badge-admin { background-color: #f59e0b; color: #000; }
         .badge-bot { background-color: #10b981; color: #000; }
+        .badge-prospek { background-color: #0284c7; color: #fff; }
+        .badge-vip { background-color: #8b5cf6; color: #fff; }
+        .badge-transfer { background-color: #10b981; color: #fff; }
+        .badge-toxic { background-color: #ef4444; color: #fff; }
 
-        .chat-main { flex: 1; display: flex; flex-direction: column; background-color: #0b141a; }
-        .chat-header { padding: 15px; background-color: #202c33; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #222d34; }
-        .chat-body { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+        .chat-main { 
+            flex: 1; 
+            display: flex; 
+            flex-direction: column; 
+            background-color: #0b141a; 
+        }
+
+        .chat-header { 
+            padding: 15px; 
+            background-color: #202c33; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            border-bottom: 1px solid #222d34; 
+        }
+
+        .chat-actions-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .label-select {
+            background-color: #111b21;
+            color: #e9edef;
+            border: 1px solid #2a3942;
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            outline: none;
+        }
+
+        .chat-body { 
+            flex: 1; 
+            padding: 20px; 
+            overflow-y: auto; 
+            display: flex; 
+            flex-direction: column; 
+            gap: 10px; 
+        }
         
-        .msg-bubble { max-width: 65%; padding: 10px 14px; border-radius: 8px; font-size: 0.9rem; line-height: 1.4; word-wrap: break-word; }
+        .msg-bubble { 
+            max-width: 65%; 
+            padding: 10px 14px; 
+            border-radius: 8px; 
+            font-size: 0.9rem; 
+            line-height: 1.4; 
+            word-wrap: break-word; 
+        }
+
         .msg-user { background-color: #202c33; align-self: flex-start; color: #e9edef; }
         .msg-bot { background-color: #005c4b; align-self: flex-end; color: #e9edef; }
         .msg-admin { background-color: #0284c7; align-self: flex-end; color: #fff; }
 
-        .chat-footer { padding: 15px; background-color: #202c33; display: flex; gap: 10px; }
-        .chat-footer input { flex: 1; background: #2a3942; border: none; color: #fff; padding: 12px; border-radius: 8px; outline: none; }
-        .chat-footer button { background: #00a884; border: none; color: #111b21; padding: 0 20px; border-radius: 8px; font-weight: bold; cursor: pointer; }
+        .chat-footer { 
+            padding: 15px; 
+            background-color: #202c33; 
+            display: flex; 
+            gap: 10px; 
+        }
+
+        .chat-footer input { 
+            flex: 1; 
+            background: #2a3942; 
+            border: none; 
+            color: #fff; 
+            padding: 12px; 
+            border-radius: 8px; 
+            outline: none; 
+        }
+
+        .chat-footer button { 
+            background: #00a884; 
+            border: none; 
+            color: #111b21; 
+            padding: 0 20px; 
+            border-radius: 8px; 
+            font-weight: bold; 
+            cursor: pointer; 
+        }
 
         /* BROADCAST STUDIO */
-        .broadcast-container { max-width: 600px; margin: 30px auto; width: 100%; background: #111b21; padding: 25px; border-radius: 12px; border: 1px solid #222d34; }
+        .broadcast-container { 
+            max-width: 600px; 
+            margin: 30px auto; 
+            width: 100%; 
+            background: #111b21; 
+            padding: 25px; 
+            border-radius: 12px; 
+            border: 1px solid #222d34; 
+        }
+
         .form-group { margin-bottom: 15px; }
-        label { display: block; font-size: 0.8rem; color: #8696a0; margin-bottom: 5px; font-weight: bold; }
-        textarea, input { width: 100%; background: #202c33; border: 1px solid #2a3942; color: #fff; padding: 10px; border-radius: 6px; outline: none; }
-        .btn-action { background: #00a884; border: none; color: #111b21; padding: 12px; border-radius: 6px; font-weight: bold; cursor: pointer; width: 100%; }
+        
+        label { 
+            display: block; 
+            font-size: 0.8rem; 
+            color: #8696a0; 
+            margin-bottom: 5px; 
+            font-weight: bold; 
+        }
+
+        textarea, input[type="text"], input[type="datetime-local"] { 
+            width: 100%; 
+            background: #202c33; 
+            border: 1px solid #2a3942; 
+            color: #fff; 
+            padding: 10px; 
+            border-radius: 6px; 
+            outline: none; 
+        }
+
+        .btn-action { 
+            background: #00a884; 
+            border: none; 
+            color: #111b21; 
+            padding: 12px; 
+            border-radius: 6px; 
+            font-weight: bold; 
+            cursor: pointer; 
+            width: 100%; 
+        }
+
+        /* MODAL POP-UP MULAI CHAT BARU */
+        .modal-overlay {
+            display: none; 
+            position: fixed; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7); 
+            justify-content: center; 
+            align-items: center; 
+            z-index: 1000;
+        }
+
+        .modal-box {
+            background-color: #111b21; 
+            border: 1px solid #222d34; 
+            padding: 25px;
+            border-radius: 12px; 
+            width: 100%; 
+            max-width: 420px; 
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+        }
+
+        .modal-header { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            margin-bottom: 15px; 
+        }
+
+        .modal-header h3 { 
+            color: #00a884; 
+            font-size: 1.1rem; 
+        }
+
+        .modal-close { 
+            background: none; 
+            border: none; 
+            color: #8696a0; 
+            font-size: 1.2rem; 
+            cursor: pointer; 
+        }
+
+        .modal-actions { 
+            display: flex; 
+            gap: 10px; 
+            margin-top: 20px; 
+        }
+
+        .btn-cancel { 
+            background-color: #202c33; 
+            color: #e9edef; 
+            border: none; 
+            padding: 10px; 
+            border-radius: 6px; 
+            flex: 1; 
+            cursor: pointer; 
+            font-weight: bold; 
+        }
+
+        .btn-submit { 
+            background-color: #00a884; 
+            color: #111b21; 
+            border: none; 
+            padding: 10px; 
+            border-radius: 6px; 
+            flex: 1; 
+            cursor: pointer; 
+            font-weight: bold; 
+        }
     </style>
 </head>
 <body>
 
     <div class="nav-tabs">
-        <button class="tab-btn active" onclick="switchTab('chat')">💬 Live Chat Panel</button>
-        <button class="tab-btn" onclick="switchTab('broadcast')">🚀 Broadcast AI Studio</button>
+        <div class="tab-group">
+            <button class="tab-btn active" onclick="switchTab('chat')">💬 Live Chat Panel</button>
+            <button class="tab-btn" onclick="switchTab('broadcast')">🚀 Broadcast AI Studio</button>
+        </div>
+        <button class="btn-export" onclick="window.location.href='/api/export-contacts'">📥 Export Contacts CSV</button>
     </div>
 
     <!-- TAB 1: LIVE CHAT PANEL -->
     <div id="tab-chat" class="tab-content active">
-        <div class="chat-sidebar" id="contacts-list"></div>
+        <div class="chat-sidebar">
+            <div class="sidebar-header">
+                <span style="font-weight: bold; font-size: 0.85rem; color: #8696a0;">DAFTAR OBROLAN</span>
+                <button class="btn-new-chat" onclick="openNewChatModal()">+ Chat Baru</button>
+            </div>
+            <div class="contacts-scroll" id="contacts-list"></div>
+        </div>
         <div class="chat-main">
             <div class="chat-header" id="chat-header">
                 <span id="active-contact-title">Pilih kontak untuk mulai percakapan</span>
-                <div id="chat-actions"></div>
+                <div id="chat-actions" class="chat-actions-group"></div>
             </div>
             <div class="chat-body" id="chat-body"></div>
             <div class="chat-footer">
@@ -74,15 +388,15 @@
             <h2 style="margin-bottom: 20px; color: #00a884;">Broadcast AI Studio</h2>
             <div class="form-group">
                 <label>Draf Pesan Utama</label>
-                <textarea id="draft" rows="3"></textarea>
+                <textarea id="draft" rows="3" placeholder="Contoh: Halo Kak! Ada diskon khusus hari ini."></textarea>
             </div>
             <div class="form-group">
                 <label>Gaya Bahasa AI Prompt</label>
-                <input type="text" id="prompt" placeholder="Contoh: Buat ramah dan santai">
+                <input type="text" id="prompt" placeholder="Contoh: Buat ramah, kasual, dan beri emoticon">
             </div>
             <div class="form-group">
-                <label>Nomor Tujuan (1 nomor/baris)</label>
-                <textarea id="numbers" rows="4"></textarea>
+                <label>Nomor Tujuan (1 nomor per baris, format 628xxx)</label>
+                <textarea id="numbers" rows="4" placeholder="628123456789&#10;628987654321"></textarea>
             </div>
             <div class="form-group">
                 <label>Jadwal Kirim (Opsional - Kosongkan jika ingin kirim sekarang)</label>
@@ -90,6 +404,28 @@
             </div>
             <button class="btn-action" onclick="sendBroadcast()">Kirim / Jadwalkan Broadcast</button>
             <p id="bc-status" style="margin-top: 10px; font-size: 0.85rem; color: #00a884;"></p>
+        </div>
+    </div>
+
+    <!-- MODAL POP-UP MULAI CHAT BARU -->
+    <div class="modal-overlay" id="new-chat-modal">
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>💬 Mulai Chat ke Nomor Baru</h3>
+                <button class="modal-close" onclick="closeNewChatModal()">✕</button>
+            </div>
+            <div class="form-group">
+                <label>Nomor WhatsApp Tujuan</label>
+                <input type="text" id="new-phone" placeholder="Contoh: 08123456789 atau 628123456789">
+            </div>
+            <div class="form-group">
+                <label>Pesan Pertama</label>
+                <textarea id="new-message" rows="3" placeholder="Contoh: Halo Kak, terima kasih sudah menghubungi kami. Ada yang bisa dibantu?"></textarea>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-cancel" onclick="closeNewChatModal()">Batal</button>
+                <button class="btn-submit" onclick="submitNewChat()">Kirim Pesan</button>
+            </div>
         </div>
     </div>
 
@@ -123,14 +459,23 @@
                 const div = document.createElement('div');
                 div.className = `contact-item ${selectedJid === c.jid ? 'active' : ''}`;
                 div.onclick = () => selectContact(c);
+
+                let labelClass = 'badge-prospek';
+                if (c.label === 'VIP') labelClass = 'badge-vip';
+                if (c.label === 'Sudah Transfer') labelClass = 'badge-transfer';
+
                 div.innerHTML = `
-                    <div>
+                    <div class="contact-info">
                         <strong>${c.phone}</strong>
-                        <div style="font-size:0.75rem; color:#8696a0;">${c.name}</div>
+                        <div style="font-size:0.75rem; color:#8696a0;">${c.name || 'Pelanggan'}</div>
                     </div>
-                    <span class="badge-tag ${c.is_handover ? 'badge-admin' : 'badge-bot'}">
-                        ${c.is_handover ? 'ADMIN' : 'BOT'}
-                    </span>
+                    <div class="contact-tags">
+                        <span class="badge-tag ${labelClass}">${c.label || 'Prospek'}</span>
+                        ${c.is_toxic ? '<span class="badge-tag badge-toxic">TOXIC</span>' : ''}
+                        <span class="badge-tag ${c.is_handover ? 'badge-admin' : 'badge-bot'}">
+                            ${c.is_handover ? 'ADMIN' : 'BOT'}
+                        </span>
+                    </div>
                 `;
                 container.appendChild(div);
             });
@@ -142,6 +487,11 @@
             
             const actions = document.getElementById('chat-actions');
             actions.innerHTML = `
+                <select class="label-select" onchange="updateLabel('${contact.jid}', this.value)">
+                    <option value="Prospek" ${contact.label==='Prospek'?'selected':''}>Prospek</option>
+                    <option value="VIP" ${contact.label==='VIP'?'selected':''}>VIP</option>
+                    <option value="Sudah Transfer" ${contact.label==='Sudah Transfer'?'selected':''}>Sudah Transfer</option>
+                </select>
                 <button style="padding:6px 12px; background:${contact.is_handover ? '#10b981' : '#f59e0b'}; border:none; border-radius:4px; font-weight:bold; cursor:pointer;" onclick="toggleHandover('${contact.jid}', ${!contact.is_handover})">
                     ${contact.is_handover ? 'Kembalikan ke Bot' : 'Ambil Alih (Admin)'}
                 </button>
@@ -183,11 +533,61 @@
             socket.emit('toggle_handover', { jid, status });
         }
 
+        function updateLabel(jid, label) {
+            socket.emit('update_label', { jid, label });
+        }
+
+        /* FUNGSI MODAL POP-UP CHAT BARU */
+        function openNewChatModal() {
+            document.getElementById('new-chat-modal').style.display = 'flex';
+        }
+
+        function closeNewChatModal() {
+            document.getElementById('new-chat-modal').style.display = 'none';
+            document.getElementById('new-phone').value = '';
+            document.getElementById('new-message').value = '';
+        }
+
+        async function submitNewChat() {
+            const phone = document.getElementById('new-phone').value.trim();
+            const message = document.getElementById('new-message').value.trim();
+
+            if (!phone || !message) {
+                alert('Nomor HP dan Pesan Pertama wajib diisi!');
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/new-chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone, message })
+                });
+
+                const data = await res.json();
+                if (data.success) {
+                    alert(data.message);
+                    closeNewChatModal();
+                } else {
+                    alert('Gagal: ' + data.message);
+                }
+            } catch (err) {
+                alert('Terjadi kesalahan koneksi server.');
+            }
+        }
+
         async function sendBroadcast() {
             const draft = document.getElementById('draft').value;
             const prompt = document.getElementById('prompt').value;
             const numbers = document.getElementById('numbers').value.split('\n').filter(n => n.trim());
             const scheduledTime = document.getElementById('schedule-time').value;
+
+            if (!draft || numbers.length === 0) {
+                alert('Draf pesan dan nomor tujuan wajib diisi!');
+                return;
+            }
+
+            document.getElementById('bc-status').innerText = 'Mengolah AI & memproses broadcast...';
 
             const res = await fetch('/api/broadcast', {
                 method: 'POST',

@@ -7,8 +7,10 @@ db.exec(`
     jid TEXT PRIMARY KEY,
     phone TEXT,
     name TEXT,
+    label TEXT DEFAULT 'Prospek',
     is_handover INTEGER DEFAULT 0,
     is_blacklisted INTEGER DEFAULT 0,
+    is_toxic INTEGER DEFAULT 0,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -45,6 +47,10 @@ module.exports = {
   setHandover: (jid, status) => db.prepare('UPDATE contacts SET is_handover = ? WHERE jid = ?').run(status ? 1 : 0, jid),
 
   setBlacklist: (jid, status) => db.prepare('UPDATE contacts SET is_blacklisted = ? WHERE jid = ?').run(status ? 1 : 0, jid),
+
+  setLabel: (jid, label) => db.prepare('UPDATE contacts SET label = ? WHERE jid = ?').run(label, jid),
+
+  setToxic: (jid, status) => db.prepare('UPDATE contacts SET is_toxic = ? WHERE jid = ?').run(status ? 1 : 0, jid),
 
   saveMessage: (jid, sender, message) => {
     return db.prepare('INSERT INTO messages (jid, sender, message) VALUES (?, ?, ?)').run(jid, sender, message);

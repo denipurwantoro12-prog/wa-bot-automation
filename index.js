@@ -7,6 +7,7 @@ const qrcode = require('qrcode-terminal');
 const { GoogleGenAI } = require('@google/genai');
 const cron = require('node-cron');
 const fs = require('fs');
+const { Parser } = require('json2csv');
 
 const db = require('./db');
 const prompts = require('./prompts');
@@ -20,98 +21,139 @@ app.use(express.static('public'));
 
 // 1. Load Knowledge Base untuk RAG
 let knowledgeData = '';
-try {
-    knowledgeData = fs.readFileSync('./knowledge.json', 'utf8');
+try { 
+    knowledgeData = fs.readFileSync('./knowledge.json', 'utf8'); 
 } catch (e) {
     console.log('File knowledge.json tidak ditemukan, berjalan tanpa data RAG.');
 }
 
-// 2. Logika Rotasi API Key Gemini (Failover Handler)
+// 2. Logika Rotasi API Key Gemini (Failover)
 const apiKeys = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',');
 let currentKeyIndex = 0;
 
-async function generateWithFailover(promptText) {
+async function generateMultimodal(contents) {
     for (let attempt = 0; attempt < apiKeys.length; attempt++) {
         try {
             const activeKey = apiKeys[currentKeyIndex].trim();
             const ai = new GoogleGenAI({ apiKey: activeKey });
-            
             const response = await ai.models.generateContent({
                 model: 'gemini-3.1-flash-lite-preview',
-                contents: promptText
+                contents: contents
             });
             return response.text;
         } catch (err) {
-            console.warn(`[API LIMIT] Key index ${currentKeyIndex} bermasalah/limit. Pindah ke key berikutnya...`);
             currentKeyIndex = (currentKeyIndex + 1) % apiKeys.length;
         }
     }
-    return 'Maaf Kak, sistem CS kami sedang mengalami kendala teknis singkat.';
+    return 'Maaf Kak, CS kami sedang mengalami kendala teknis.';
 }
 
-// 3. Inisialisasi WhatsApp Client
+// 3. Filter Kata Kasar (Toxic Filter)
+const kataKasar = ['anjing', 'babi', 'bangsat', 'kontol', 'memek', 'goblok', 'tolol'];
+function cekToxic(teks) {
+    return kataKasar.some(kata => teks.toLowerCase().includes(kata));
+}
+
+// 4. Inisialisasi WhatsApp Client
 const client = new Client({
     authStrategy: new LocalAuth({ dataPath: './sessions' }),
-    puppeteer: {
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-    }
+    puppeteer: { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] }
 });
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// 4. Socket.io Real-Time Event Connections
+// Helper Jitter: Menghasilkan jeda acak (default 15 - 45 detik)
+function getJitterDelay(minSeconds = 15, maxSeconds = 45) {
+    const minMs = minSeconds * 1000;
+    const maxMs = maxSeconds * 1000;
+    return Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+}
+
+// 5. Socket.io Real-Time Events
 io.on('connection', (socket) => {
     socket.on('get_contacts', () => socket.emit('contacts_list', db.getAllContacts()));
+    socket.on('get_messages', (jid) => socket.emit('messages_list', { jid, messages: db.getMessages(jid) }));
     
-    socket.on('get_messages', (jid) => {
-        socket.emit('messages_list', { jid, messages: db.getMessages(jid) });
-    });
-
     socket.on('send_manual_reply', async ({ jid, message }) => {
         try {
             await client.sendMessage(jid, message);
             db.saveMessage(jid, 'Admin', message);
             io.emit('new_message', { jid, sender: 'Admin', message });
-        } catch (err) {
-            console.error('Gagal kirim pesan manual:', err.message);
-        }
+        } catch (err) {}
+    });
+
+    socket.on('update_label', ({ jid, label }) => {
+        db.setLabel(jid, label);
+        io.emit('contacts_updated', db.getAllContacts());
     });
 
     socket.on('toggle_handover', ({ jid, status }) => {
         db.setHandover(jid, status);
         io.emit('contacts_updated', db.getAllContacts());
     });
-
-    socket.on('toggle_blacklist', ({ jid, status }) => {
-        db.setBlacklist(jid, status);
-        io.emit('contacts_updated', db.getAllContacts());
-    });
 });
 
-// 5. API Endpoint Broadcast
+// 6. Endpoint Export Contacts to CSV
+app.get('/api/export-contacts', (req, res) => {
+    const contacts = db.getAllContacts();
+    const json2csvParser = new Parser();
+    const csv = json2csvParser.parse(contacts);
+    res.header('Content-Type', 'text/csv');
+    res.attachment('daftar_kontak_wa.csv');
+    return res.send(csv);
+});
+
+// 7. Endpoint untuk Memulai Chat ke Nomor Baru
+app.post('/api/new-chat', async (req, res) => {
+    try {
+        const { phone, message } = req.body;
+        let formattedPhone = phone.trim().replace(/[^0-9]/g, '');
+        
+        if (formattedPhone.startsWith('0')) {
+            formattedPhone = '62' + formattedPhone.slice(1);
+        }
+        
+        const jid = `${formattedPhone}@c.us`;
+
+        const isRegistered = await client.isRegisteredUser(jid);
+        if (!isRegistered) {
+            return res.status(400).json({ success: false, message: 'Nomor tidak terdaftar di WhatsApp!' });
+        }
+
+        await client.sendMessage(jid, message);
+
+        db.saveContact(jid, formattedPhone);
+        db.saveMessage(jid, 'Admin', message);
+        io.emit('contacts_updated', db.getAllContacts());
+        io.emit('new_message', { jid, sender: 'Admin', message });
+
+        res.json({ success: true, message: 'Berhasil mengirim pesan ke nomor baru!' });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// 8. API Broadcast Massal (Fitur Anti-Banned: Jitter + Micro-Breaks)
 app.post('/api/broadcast', async (req, res) => {
     const { draft, prompt, numbers, scheduledTime } = req.body;
-
+    
     if (scheduledTime) {
         db.saveScheduledBroadcast(draft, prompt, JSON.stringify(numbers), scheduledTime);
         return res.json({ message: 'Broadcast berhasil dijadwalkan!' });
     }
+    
+    res.json({ message: 'Proses broadcast dimulai!' });
 
-    res.json({ message: 'Proses broadcast langsung dimulai!' });
-
+    let counter = 0;
     for (let target of numbers) {
         let jid = target.trim();
         if (!jid.endsWith('@c.us')) jid = `${jid}@c.us`;
-
+        
         const contact = db.getContact(jid);
-        if (contact && contact.is_blacklisted) {
-            console.log(`[SKIPPED] ${jid} berada di daftar blacklist (Opt-Out).`);
-            continue;
-        }
+        if (contact && contact.is_blacklisted) continue;
 
         const promptBroadcast = prompts.getBroadcastPrompt(draft, prompt);
-        const pesanUnik = await generateWithFailover(promptBroadcast);
+        const pesanUnik = await generateMultimodal(promptBroadcast);
 
         try {
             await client.sendMessage(jid, pesanUnik);
@@ -120,15 +162,27 @@ app.post('/api/broadcast', async (req, res) => {
             io.emit('new_message', { jid, sender: 'Bot', message: pesanUnik });
         } catch (e) {}
 
-        await delay(Math.floor(Math.random() * 5000) + 5000);
+        counter++;
+        // Setiap 10 pesan, beri waktu istirahat ekstra 2 - 5 menit (Micro-Break)
+        if (counter % 10 === 0) {
+            const istirahatMs = getJitterDelay(120, 300);
+            console.log(`[MICRO-BREAK] Istirahat selama ${Math.round(istirahatMs / 1000 / 60)} menit...`);
+            await delay(istirahatMs);
+        } else {
+            // Jeda Jitter acak 15 - 45 detik
+            const jedaAman = getJitterDelay(15, 45);
+            console.log(`[JITTER] Menunggu ${Math.round(jedaAman / 1000)} detik...`);
+            await delay(jedaAman);
+        }
     }
 });
 
-// 6. Scheduler Cron Job (Cek antrean setiap 1 menit)
+// 9. Cron Job Scheduler (Otomatis memproses broadcast terjadwal)
 cron.schedule('* * * * *', async () => {
     const pending = db.getPendingBroadcasts();
     for (let job of pending) {
         const numbers = JSON.parse(job.numbers);
+        let counter = 0;
         for (let target of numbers) {
             let jid = target.trim();
             if (!jid.endsWith('@c.us')) jid = `${jid}@c.us`;
@@ -137,7 +191,7 @@ cron.schedule('* * * * *', async () => {
             if (contact && contact.is_blacklisted) continue;
 
             const promptBroadcast = prompts.getBroadcastPrompt(job.draft, job.prompt);
-            const pesanUnik = await generateWithFailover(promptBroadcast);
+            const pesanUnik = await generateMultimodal(promptBroadcast);
 
             try {
                 await client.sendMessage(jid, pesanUnik);
@@ -146,47 +200,74 @@ cron.schedule('* * * * *', async () => {
                 io.emit('new_message', { jid, sender: 'Bot', message: pesanUnik });
             } catch (e) {}
 
-            await delay(5000);
+            counter++;
+            if (counter % 10 === 0) {
+                await delay(getJitterDelay(120, 300));
+            } else {
+                await delay(getJitterDelay(15, 45));
+            }
         }
         db.markBroadcastDone(job.id);
     }
 });
 
-// 7. Event Listener WhatsApp
+// 10. Listener WhatsApp
 client.on('qr', (qr) => qrcode.generate(qr, { small: true }));
-client.on('ready', () => console.log('Robot WA + Live Chat Panel + Rotasi Gemini AI Siap!'));
+client.on('ready', () => console.log('Robot WA Full Feature Ready!'));
 
 client.on('message', async (msg) => {
     if (msg.from.includes('@g.us') || msg.isStatus) return;
 
     const jid = msg.from;
-    const text = msg.body.trim();
     const phone = jid.replace('@c.us', '').replace('@lid', '');
+    let text = msg.body ? msg.body.trim() : '';
 
     db.saveContact(jid, phone);
+
+    // 1. Filter Toxic
+    if (cekToxic(text)) {
+        db.setToxic(jid, 1);
+        db.setHandover(jid, 1);
+        await msg.reply('Mohon gunakan bahasa yang sopan ya Kak. Percakapan ini kami alihkan ke Admin.');
+        io.emit('contacts_updated', db.getAllContacts());
+        return;
+    }
+
+    // 2. Multimodal (Gambar / Voice Note)
+    let promptContents = [];
+    if (msg.hasMedia) {
+        const media = await msg.downloadMedia();
+        if (media) {
+            promptContents.push({
+                inlineData: { data: media.data, mimeType: media.mimetype }
+            });
+            text = text || '[Penerimaan Media/Gambar/Voice Note]';
+        }
+    }
+
     db.saveMessage(jid, 'User', text);
     io.emit('new_message', { jid, sender: 'User', message: text });
     io.emit('contacts_updated', db.getAllContacts());
 
-    // Fitur Opt-Out / Blacklist otomatis
+    // 3. Opt-Out STOP / BERHENTI
     if (text.toUpperCase() === 'STOP' || text.toUpperCase() === 'BERHENTI') {
         db.setBlacklist(jid, true);
-        await msg.reply('Nomor Anda telah berhasil kami hapus dari daftar broadcast promosi.');
+        await msg.reply('Nomor Anda berhasil dihapus dari daftar broadcast.');
         return;
     }
 
-    // Fitur Handover Minta Admin
+    // 4. Eskalasi Admin Manusia
     if (text.toLowerCase().includes('admin') || text.toLowerCase().includes('human')) {
         db.setHandover(jid, true);
-        await msg.reply('Pesan Kakak diteruskan ke Admin Manusia. Mohon tunggu balasan Admin ya.');
+        await msg.reply('Pesan diteruskan ke Admin Manusia.');
         io.emit('contacts_updated', db.getAllContacts());
         return;
     }
 
     const contact = db.getContact(jid);
-    if (contact && contact.is_handover) return; // Bot diam jika Handover Admin aktif
+    if (contact && contact.is_handover) return;
 
-    // Respon AI dengan RAG & Chat Memory via Failover Key
+    // 5. Balasan AI
     try {
         try {
             const chat = await msg.getChat();
@@ -195,19 +276,17 @@ client.on('message', async (msg) => {
 
         const riwayatChat = db.getMessages(jid).slice(-6);
         const csPromptText = prompts.getCsPrompt(knowledgeData, riwayatChat, text);
+        promptContents.push(csPromptText);
 
         const [jawabanAI] = await Promise.all([
-            generateWithFailover(csPromptText),
+            generateMultimodal(promptContents),
             delay(3000)
         ]);
 
         await msg.reply(jawabanAI);
-
         db.saveMessage(jid, 'Bot', jawabanAI);
         io.emit('new_message', { jid, sender: 'Bot', message: jawabanAI });
-    } catch (err) {
-        console.error('Gagal membalas pesan:', err.message);
-    }
+    } catch (err) {}
 });
 
 server.listen(3000, () => console.log('Dashboard berjalan di http://localhost:3000'));
