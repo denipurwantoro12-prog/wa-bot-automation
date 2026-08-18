@@ -56,6 +56,37 @@ function getJitterDelay(minSeconds = 15, maxSeconds = 45) {
     return Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
 }
 
+// ===================================================
+// FUNGSI PENGIRIMAN AMAN ANTI-BAN (TYPING + DELAY)
+// ===================================================
+async function sendSafeMessage(client, jid, text, mediaObj = null) {
+    try {
+        const chat = await client.getChatById(jid);
+        if (chat) {
+            await chat.sendStateTyping();
+            // Jeda pengetikan manusiawi secara acak (2.5 hingga 5 detik)
+            const typingDelay = Math.floor(Math.random() * (5000 - 2500 + 1)) + 2500;
+            await delay(typingDelay);
+        }
+    } catch (errState) {
+        // Mengabaikan error jika penyiapan state typing gagal / tidak didukung
+    }
+
+    let sentMessage;
+    if (mediaObj) {
+        sentMessage = await client.sendMessage(jid, mediaObj, { caption: text || '' });
+    } else if (text) {
+        sentMessage = await client.sendMessage(jid, text);
+    }
+
+    try {
+        const chat = await client.getChatById(jid);
+        if (chat) await chat.clearState();
+    } catch (errClear) {}
+
+    return sentMessage;
+}
+
 // GENERATOR AI GEMINI
 async function generateMultimodalDinamis(contents, customKeysStr = '', fallbackText = '') {
     let keysToUse = customKeysStr.trim() 
@@ -152,7 +183,6 @@ function initWhatsAppClient(sessionId) {
         const oldClient = sessions[sessionId];
         delete sessions[sessionId];
 
-        // Hancurkan browser puppeteer lama agar tidak terjadi bentrokan binding pada re-initialization
         if (oldClient) {
             try {
                 await oldClient.destroy();
@@ -184,7 +214,7 @@ function initWhatsAppClient(sessionId) {
             db.setToxic(jid, 1);
             db.setHandover(jid, 1);
             try {
-                await msg.reply('Mohon gunakan bahasa yang sopan ya Kak. Percakapan ini kami alihkan ke Admin.');
+                await sendSafeMessage(client, jid, 'Mohon gunakan bahasa yang sopan ya Kak. Percakapan ini kami alihkan ke Admin.');
             } catch (e) {}
             io.emit('contacts_updated', db.getAllContacts());
             return;
@@ -211,13 +241,13 @@ function initWhatsAppClient(sessionId) {
 
         if (text.toUpperCase() === 'STOP' || text.toUpperCase() === 'BERHENTI') {
             db.setBlacklist(jid, true);
-            try { await msg.reply('Nomor Anda berhasil dihapus dari daftar broadcast.'); } catch (e) {}
+            try { await sendSafeMessage(client, jid, 'Nomor Anda berhasil dihapus dari daftar broadcast.'); } catch (e) {}
             return;
         }
 
         if (text.toLowerCase().includes('admin') || text.toLowerCase().includes('human')) {
             db.setHandover(jid, true);
-            try { await msg.reply('Pesan diteruskan ke Admin Manusia.'); } catch (e) {}
+            try { await sendSafeMessage(client, jid, 'Pesan diteruskan ke Admin Manusia.'); } catch (e) {}
             io.emit('contacts_updated', db.getAllContacts());
             return;
         }
@@ -233,13 +263,6 @@ function initWhatsAppClient(sessionId) {
         }
 
         try {
-            if (!msg.from.endsWith('@lid')) {
-                try {
-                    const chat = await msg.getChat();
-                    if (chat) await chat.sendStateTyping();
-                } catch (e) {}
-            }
-
             const riwayatChat = db.getMessages(jid).slice(-6);
             const currentPersona = db.getSetting('persona_prompt') || DEFAULT_PERSONA;
             const currentKnowledge = db.getSetting('knowledge_base') || DEFAULT_KNOWLEDGE;
@@ -259,10 +282,11 @@ Pembeli: ${text}`;
 
             const [jawabanAI] = await Promise.all([
                 generateMultimodalDinamis(promptContents),
-                delay(3000)
+                delay(1000)
             ]);
 
-            await msg.reply(jawabanAI);
+            // DENGAN FITUR PENGIRIMAN AMAN SIMULASI MENGETIK
+            await sendSafeMessage(client, jid, jawabanAI);
             db.saveMessage(jid, 'Bot', jawabanAI);
             io.emit('new_message', { jid, sender: 'Bot', message: jawabanAI });
         } catch (err) {
@@ -270,8 +294,10 @@ Pembeli: ${text}`;
         }
     });
 
-    client.initialize();
     sessions[sessionId] = client;
+    client.initialize().catch(err => {
+        console.error(`[INIT ERROR] Gagal menginisialisasi ${sessionId}:`, err.message);
+    });
     return client;
 }
 
@@ -285,7 +311,10 @@ function getActiveClient() {
 // SOCKET.IO EVENTS
 io.on('connection', (socket) => {
     socket.on('get_contacts', () => socket.emit('contacts_list', db.getAllContacts()));
-    socket.on('get_messages', (jid) => socket.emit('messages_list', { jid, messages: db.getMessages(jid) }));
+    socket.on('get_messages', (jid) => {
+        if (!jid) return;
+        socket.emit('messages_list', { jid, messages: db.getMessages(jid) });
+    });
     
     socket.on('send_manual_reply', async ({ jid, message, media }) => {
         try {
@@ -296,12 +325,12 @@ io.on('connection', (socket) => {
             const client = getActiveClient();
             if (media && media.data) {
                 const mediaObj = new MessageMedia(media.mimetype, media.data, media.filename);
-                await client.sendMessage(jid, mediaObj, { caption: message || '' });
+                await sendSafeMessage(client, jid, message || '', mediaObj);
                 const logText = message ? `[Media: ${media.filename}] ${message}` : `[Media: ${media.filename}]`;
                 db.saveMessage(jid, 'Admin', logText);
                 io.emit('new_message', { jid, sender: 'Admin', message: logText });
             } else if (message) {
-                await client.sendMessage(jid, message);
+                await sendSafeMessage(client, jid, message);
                 db.saveMessage(jid, 'Admin', message);
                 io.emit('new_message', { jid, sender: 'Admin', message });
             }
@@ -382,36 +411,6 @@ app.post('/api/sessions/create', async (req, res) => {
     res.json({ success: true, message: `Akun baru '${cleanId}' dibuat. Silakan scan QR Code!`, activeSession: cleanId });
 });
 
-// ENDPOINT RE-LOGIN / RECONNECT AKUN
-app.post('/api/sessions/reconnect', async (req, res) => {
-    const { sessionId } = req.body;
-    if (!sessionId) return res.status(400).json({ success: false, message: 'Session ID wajib diisi' });
-
-    console.log(`[RECONNECT] Memulai ulang sesi '${sessionId}'...`);
-
-    // Hancurkan client lama jika masih menggantung
-    if (sessions[sessionId]) {
-        try {
-            await sessions[sessionId].destroy();
-        } catch (e) {
-            console.error(`[DESTROY FAIL] ${sessionId}:`, e.message);
-        }
-        delete sessions[sessionId];
-    }
-
-    activeSessionId = sessionId;
-    db.saveSetting('active_session_id', sessionId);
-    sessionStates[sessionId] = 'CONNECTING';
-
-    // Inisialisasi ulang client (akan memicu pendaftaran QR Code baru)
-    initWhatsAppClient(sessionId);
-
-    res.json({ 
-        success: true, 
-        message: `Menghubungkan ulang akun '${sessionId}'... Silakan scan QR Code yang muncul.` 
-    });
-});
-
 // EXPORT CONTACTS CSV
 app.get('/api/export-contacts', (req, res) => {
     const contacts = db.getAllContacts();
@@ -444,7 +443,7 @@ app.post('/api/new-chat', async (req, res) => {
         }
 
         const jid = numberDetails._serialized;
-        await client.sendMessage(jid, message);
+        await sendSafeMessage(client, jid, message);
 
         db.saveContact(jid, formattedPhone);
         db.saveMessage(jid, 'Admin', message);
@@ -526,7 +525,6 @@ app.post('/api/broadcast', async (req, res) => {
                 continue;
             }
         } catch (errCheck) {
-            console.warn(`[NUMBER CHECK NOTICE] ${cleaned}:`, errCheck.message || errCheck);
             if (cleaned.length >= 10) {
                 jid = `${cleaned}@c.us`;
             } else {
@@ -546,14 +544,12 @@ Tugas AI: Tulis ulang Draf Utama menjadi pesan broadcast WhatsApp yang unik dan 
         const pesanUnik = await generateMultimodalDinamis(promptBroadcast, customKeys || '', fallbackMsg || draft);
 
         try {
-            if (mediaObj) {
-                await client.sendMessage(jid, mediaObj, { caption: pesanUnik });
-            } else {
-                await client.sendMessage(jid, pesanUnik);
-            }
+            // PENGIRIMAN AMAN DENGAN SIMULASI MENGETIK SEBELUM PESAN TERKIRIM
+            await sendSafeMessage(client, jid, pesanUnik, mediaObj);
+
             const logText = mediaObj ? `[Media: ${media.filename}] ${pesanUnik}` : pesanUnik;
             db.saveContact(jid, phone, name);
-            db.saveMessage(jid, 'Bot', pesanUnik);
+            db.saveMessage(jid, 'Bot', logText);
             io.emit('new_message', { jid, sender: 'Bot', message: logText });
             console.log(`[BROADCAST SUCCESS] Terkirim ke ${jid}`);
         } catch (e) {
@@ -627,7 +623,9 @@ Tugas AI: Tulis ulang Draf Utama menjadi pesan broadcast WhatsApp yang unik dan 
             const pesanUnik = await generateMultimodalDinamis(promptBroadcast, '', job.draft);
 
             try {
-                await client.sendMessage(jid, pesanUnik);
+                // PENGIRIMAN AMAN UNTUK CRON SCHEDULER
+                await sendSafeMessage(client, jid, pesanUnik);
+
                 db.saveContact(jid, phone, name);
                 db.saveMessage(jid, 'Bot', pesanUnik);
                 io.emit('new_message', { jid, sender: 'Bot', message: pesanUnik });
