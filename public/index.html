@@ -333,14 +333,48 @@
         .msg-bot { background-color: #005c4b; align-self: flex-end; color: #e9edef; }
         .msg-admin { background-color: #0284c7; align-self: flex-end; color: #fff; }
 
-        .chat-footer { 
-            padding: 15px; 
-            background-color: #202c33; 
-            display: flex; 
-            gap: 10px; 
+        .chat-footer-wrapper {
+            background-color: #202c33;
+            padding: 12px 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
         }
 
-        .chat-footer input { 
+        .file-preview-box {
+            display: none;
+            align-items: center;
+            justify-content: space-between;
+            background: #111b21;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            color: #00a884;
+            border: 1px solid #2a3942;
+        }
+
+        .chat-footer-inputs { 
+            display: flex; 
+            gap: 10px; 
+            align-items: center;
+        }
+
+        .btn-attach {
+            background: #2a3942;
+            border: none;
+            color: #00a884;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .btn-attach:hover {
+            background: #3b4a54;
+        }
+
+        .chat-footer-inputs input[type="text"] { 
             flex: 1; 
             background: #2a3942; 
             border: none; 
@@ -350,11 +384,12 @@
             outline: none; 
         }
 
-        .chat-footer button { 
+        .chat-footer-inputs button.btn-send { 
             background: #00a884; 
             border: none; 
             color: #111b21; 
             padding: 0 20px; 
+            height: 42px;
             border-radius: 8px; 
             font-weight: bold; 
             cursor: pointer; 
@@ -382,7 +417,7 @@
             font-weight: bold; 
         }
 
-        textarea, input[type="text"], input[type="datetime-local"] { 
+        textarea, input[type="text"], input[type="file"], input[type="datetime-local"] { 
             width: 100%; 
             background: #202c33; 
             border: 1px solid #2a3942; 
@@ -527,9 +562,19 @@
                 <div id="chat-actions" class="chat-actions-group"></div>
             </div>
             <div class="chat-body" id="chat-body"></div>
-            <div class="chat-footer">
-                <input type="text" id="manual-msg" placeholder="Ketik balasan sebagai Admin manusia...">
-                <button onclick="sendManualReply()">Kirim</button>
+            
+            <div class="chat-footer-wrapper">
+                <div id="chat-file-preview" class="file-preview-box">
+                    <span id="chat-file-name">📎 file.jpg</span>
+                    <button onclick="clearChatFile()" style="background: none; border: none; color: #ef4444; font-weight: bold; cursor: pointer;">✕ Batal</button>
+                </div>
+                <div class="chat-footer-inputs">
+                    <button class="btn-attach" onclick="document.getElementById('manual-file').click()" title="Lampirkan File/Gambar">📎</button>
+                    <input type="file" id="manual-file" style="display: none;" onchange="handleChatFileSelect(event)">
+                    
+                    <input type="text" id="manual-msg" placeholder="Ketik balasan sebagai Admin manusia...">
+                    <button class="btn-send" onclick="sendManualReply()">Kirim</button>
+                </div>
             </div>
         </div>
     </div>
@@ -546,6 +591,12 @@
             <div class="form-group">
                 <label>Gaya Bahasa AI Prompt (Instruksi Khusus AI)</label>
                 <textarea id="prompt" rows="3" placeholder="Contoh: Buat ramah, kasual, selipkan emoticon, dan ajak pembeli balas pesan ini."></textarea>
+            </div>
+
+            <div class="form-group">
+                <label>Lampiran Media Broadcast (Gambar / PDF / Video - Opsional)</label>
+                <input type="file" id="bc-file" onchange="handleBcFileSelect(event)">
+                <span id="bc-file-info" style="font-size: 0.72rem; color: #00a884; display: none; margin-top: 4px;"></span>
             </div>
 
             <details style="background: #202c33; border: 1px solid #2a3942; border-radius: 6px; padding: 12px; margin-bottom: 15px;">
@@ -641,6 +692,73 @@
         const socket = io();
         let selectedJid = null;
         let contactsData = [];
+        let selectedChatFile = null;
+        let selectedBcFile = null;
+
+        /* LOGIKA NOTIFIKASI DYNAMIC TAB BAR */
+        let unreadCount = 0;
+        const ORIGINAL_TITLE = "WhatsApp Web Admin & Broadcast Studio";
+
+        function updateTabTitle() {
+            if (unreadCount > 0) {
+                document.title = `(${unreadCount}) 💬 ${ORIGINAL_TITLE}`;
+            } else {
+                document.title = ORIGINAL_TITLE;
+            }
+        }
+
+        function resetUnreadCount() {
+            unreadCount = 0;
+            updateTabTitle();
+        }
+
+        // Reset notifikasi saat pengguna membuka / meng-klik kembali tab ini
+        window.addEventListener('focus', () => {
+            resetUnreadCount();
+        });
+
+        // HELPER CONVERT FILE TO BASE64
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => {
+                    const base64String = reader.result.split(',')[1];
+                    resolve(base64String);
+                };
+                reader.onerror = error => reject(error);
+            });
+        }
+
+        /* HANDLING ATTACH FILE CHAT MANUAL */
+        function handleChatFileSelect(e) {
+            const file = e.target.files[0];
+            if (file) {
+                selectedChatFile = file;
+                document.getElementById('chat-file-name').innerText = `📎 ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+                document.getElementById('chat-file-preview').style.display = 'flex';
+            }
+        }
+
+        function clearChatFile() {
+            selectedChatFile = null;
+            document.getElementById('manual-file').value = '';
+            document.getElementById('chat-file-preview').style.display = 'none';
+        }
+
+        /* HANDLING ATTACH FILE BROADCAST */
+        function handleBcFileSelect(e) {
+            const file = e.target.files[0];
+            const info = document.getElementById('bc-file-info');
+            if (file) {
+                selectedBcFile = file;
+                info.innerText = `✓ File terpilih: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+                info.style.display = 'block';
+            } else {
+                selectedBcFile = null;
+                info.style.display = 'none';
+            }
+        }
 
         /* FUNGSI KONTROL AI ADMIN GLOBAL (ON / OFF) */
         async function loadAiStatus() {
@@ -870,15 +988,111 @@
             body.scrollTop = body.scrollHeight;
         });
 
-        socket.on('new_message', ({ jid }) => {
+        socket.on('new_message', ({ jid, sender }) => {
             if (selectedJid === jid) socket.emit('get_messages', jid);
+
+            // TAMBAH NOTIFIKASI TAB BAR JIKA PESAN MASUK DARI USER
+            if (sender === 'User') {
+                if (document.hidden || selectedJid !== jid) {
+                    unreadCount++;
+                    updateTabTitle();
+                }
+            }
         });
 
-        function sendManualReply() {
+                /* FUNGSI LOAD SESSIONS DENGAN DETEKSI OTOMATIS BUTUH QR */
+        async function loadSessions() {
+            try {
+                const res = await fetch('/api/sessions');
+                const data = await res.json();
+                const select = document.getElementById('session-select');
+                if (!select) return;
+                select.innerHTML = '';
+
+                data.sessions.forEach(s => {
+                    const opt = document.createElement('option');
+                    opt.value = s;
+                    opt.innerText = s;
+                    if (s === data.activeSession) opt.selected = true;
+                    select.appendChild(opt);
+                });
+
+                // CEK STATUS AKUN AKTIF
+                handleSessionStateUI(data.activeSession, data.activeState, data.activeQr);
+            } catch (err) {
+                console.error('Gagal memuat daftar akun:', err);
+            }
+        }
+
+        // FUNGSI UNTUK MERUBAH TAMPILAN STATUS AKUN & MEMUNCULKAN WARNING/MODAL QR
+        function handleSessionStateUI(sessionId, status, qr) {
+            const statusEl = document.getElementById('session-status');
+            
+            if (status === 'NEED_QR') {
+                if (statusEl) {
+                    statusEl.innerText = '⚠️ Terputus (Butuh Scan QR)';
+                    statusEl.style.color = '#ef4444';
+                }
+                // Tampilkan Banner Peringatan
+                showApiAlert(`⚠️ Sesi akun '${sessionId}' terputus! Silakan scan QR Code kembali.`);
+                
+                // Jika ada QR code, otomatis buka modal scan QR
+                if (qr) {
+                    openAddAccountModal();
+                    document.getElementById('new-account-id').value = sessionId;
+                    document.getElementById('qr-container').style.display = 'flex';
+                    const qrBox = document.getElementById('qrcode-box');
+                    qrBox.innerHTML = '';
+                    new QRCode(qrBox, { text: qr, width: 200, height: 200 });
+                }
+            } else if (status === 'CONNECTED') {
+                if (statusEl) {
+                    statusEl.innerText = '● Terhubung';
+                    statusEl.style.color = '#00a884';
+                }
+                hideApiAlert();
+            } else if (status === 'DISCONNECTED') {
+                if (statusEl) {
+                    statusEl.innerText = '❌ Terputus';
+                    statusEl.style.color = '#ef4444';
+                }
+                showApiAlert(`❌ Akun '${sessionId}' terputus dari WhatsApp.`);
+            }
+        }
+
+        // LISTEN EVENT STATUS SESI DARI SERVER
+        socket.on('session_status_changed', ({ sessionId, status, qr, message }) => {
+            const select = document.getElementById('session-select');
+            if (select && select.value === sessionId) {
+                handleSessionStateUI(sessionId, status, qr);
+            }
+        });
+
+        /* MEMBALAS CHAT MANUAL TERMASUK ATTACH MEDIA */
+        async function sendManualReply() {
             const input = document.getElementById('manual-msg');
-            if (!input.value || !selectedJid) return;
-            socket.emit('send_manual_reply', { jid: selectedJid, message: input.value });
+            const message = input.value.trim();
+
+            if ((!message && !selectedChatFile) || !selectedJid) return;
+
+            let mediaData = null;
+            if (selectedChatFile) {
+                const base64 = await fileToBase64(selectedChatFile);
+                mediaData = {
+                    data: base64,
+                    mimetype: selectedChatFile.type,
+                    filename: selectedChatFile.name
+                };
+            }
+
+            socket.emit('send_manual_reply', { 
+                jid: selectedJid, 
+                message: message,
+                media: mediaData
+            });
+
             input.value = '';
+            clearChatFile();
         }
 
         function toggleHandover(jid, status) {
@@ -889,7 +1103,7 @@
             socket.emit('update_label', { jid, label });
         }
 
-        /* FUNGSI MODAL POP-UP CHAT BARU */
+        /* MODAL CHAT BARU */
         function openNewChatModal() {
             document.getElementById('new-chat-modal').style.display = 'flex';
         }
@@ -928,6 +1142,7 @@
             }
         }
 
+        /* MENGIRIM BROADCAST DENGAN ATTACH MEDIA */
         async function sendBroadcast() {
             const draft = document.getElementById('draft').value;
             const prompt = document.getElementById('prompt').value;
@@ -943,11 +1158,21 @@
 
             document.getElementById('bc-status').innerText = 'Mengolah AI & memproses broadcast...';
 
+            let mediaData = null;
+            if (selectedBcFile) {
+                const base64 = await fileToBase64(selectedBcFile);
+                mediaData = {
+                    data: base64,
+                    mimetype: selectedBcFile.type,
+                    filename: selectedBcFile.name
+                };
+            }
+
             try {
                 const res = await fetch('/api/broadcast', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ draft, prompt, numbers, scheduledTime, customKeys, fallbackMsg })
+                    body: JSON.stringify({ draft, prompt, numbers, scheduledTime, customKeys, fallbackMsg, media: mediaData })
                 });
                 const data = await res.json();
                 document.getElementById('bc-status').innerText = data.message;
