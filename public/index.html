@@ -525,7 +525,11 @@
             <select id="session-select" onchange="switchSession(this.value)">
                 <option value="default">default</option>
             </select>
-            <button class="btn-add-account" onclick="openAddAccountModal()">+ Tambah Akun / Pendaftaran Baru</button>
+            <span id="session-status" style="font-size: 0.8rem; font-weight: bold; margin-left: 5px;"></span>
+            
+            <button id="btn-reconnect" class="btn-add-account" style="background-color: #f59e0b; display: none;" onclick="reconnectSession()">🔄 Re-login / Scan QR</button>
+            
+            <button class="btn-add-account" onclick="openAddAccountModal()">+ Tambah Akun Baru</button>
         </div>
 
         <div class="ai-control-group">
@@ -615,9 +619,11 @@
             </details>
 
             <div class="form-group">
-                <label>Nomor Tujuan (1 nomor per baris, format 628xxx)</label>
-                <textarea id="numbers" rows="4" placeholder="628123456789&#10;628987654321"></textarea>
+                <label>Nomor Tujuan & Nama (1 per baris, format: Nomor, Nama)</label>
+                <textarea id="numbers" rows="5" placeholder="628123456789, Budi&#10;08987654321, Pak Ahmad&#10;6281122334455, Mbak Siti"></textarea>
+                <span style="font-size: 0.72rem; color: #8696a0; display: block; margin-top: 4px;">Pisahkan nomor dan nama dengan koma (,). Nama bersifat opsional.</span>
             </div>
+
             <div class="form-group">
                 <label>Jadwal Kirim (Opsional - Kosongkan jika ingin kirim sekarang)</label>
                 <input type="datetime-local" id="schedule-time">
@@ -712,7 +718,6 @@
             updateTabTitle();
         }
 
-        // Reset notifikasi saat pengguna membuka / meng-klik kembali tab ini
         window.addEventListener('focus', () => {
             resetUnreadCount();
         });
@@ -807,7 +812,30 @@
             updateAiStatusUI(aiStatus);
         });
 
-        /* FUNGSI MANAJEMEN MULTI AKUN / SESSIONS */
+        /* FUNGSI RE-LOGIN AKUN TERPUTUS */
+        async function reconnectSession() {
+            const select = document.getElementById('session-select');
+            const sessionId = select ? select.value : 'default';
+
+            openAddAccountModal();
+            document.getElementById('new-account-id').value = sessionId;
+            document.getElementById('qr-container').style.display = 'flex';
+            document.getElementById('qrcode-box').innerHTML = 'Menghubungkan ulang & meminta QR Code dari server...';
+
+            try {
+                const res = await fetch('/api/sessions/reconnect', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionId })
+                });
+                const data = await res.json();
+                console.log(data.message);
+            } catch (err) {
+                alert('Gagal menghubungkan ulang ke server.');
+            }
+        }
+
+        /* FUNGSI LOAD SESSIONS DENGAN DETEKSI OTOMATIS BUTUH QR */
         async function loadSessions() {
             try {
                 const res = await fetch('/api/sessions');
@@ -823,13 +851,61 @@
                     if (s === data.activeSession) opt.selected = true;
                     select.appendChild(opt);
                 });
+
+                handleSessionStateUI(data.activeSession, data.activeState, data.activeQr);
             } catch (err) {
                 console.error('Gagal memuat daftar akun:', err);
             }
         }
 
+        function handleSessionStateUI(sessionId, status, qr) {
+            const statusEl = document.getElementById('session-status');
+            const btnReconnect = document.getElementById('btn-reconnect');
+            
+            if (status === 'NEED_QR') {
+                if (statusEl) {
+                    statusEl.innerText = '⚠️ Terputus (Butuh Scan QR)';
+                    statusEl.style.color = '#ef4444';
+                }
+                if (btnReconnect) btnReconnect.style.display = 'inline-block';
+
+                showApiAlert(`⚠️ Sesi akun '${sessionId}' terputus! Silakan klik "Re-login" untuk Scan QR Code.`);
+                
+                if (qr) {
+                    openAddAccountModal();
+                    document.getElementById('new-account-id').value = sessionId;
+                    document.getElementById('qr-container').style.display = 'flex';
+                    const qrBox = document.getElementById('qrcode-box');
+                    qrBox.innerHTML = '';
+                    new QRCode(qrBox, { text: qr, width: 200, height: 200 });
+                }
+            } else if (status === 'CONNECTED') {
+                if (statusEl) {
+                    statusEl.innerText = '● Terhubung';
+                    statusEl.style.color = '#00a884';
+                }
+                if (btnReconnect) btnReconnect.style.display = 'none';
+                hideApiAlert();
+            } else if (status === 'DISCONNECTED') {
+                if (statusEl) {
+                    statusEl.innerText = '❌ Terputus';
+                    statusEl.style.color = '#ef4444';
+                }
+                if (btnReconnect) btnReconnect.style.display = 'inline-block';
+                showApiAlert(`❌ Akun '${sessionId}' terputus dari WhatsApp. Klik "Re-login" untuk menyambungkan kembali.`);
+            }
+        }
+
+        socket.on('session_status_changed', ({ sessionId, status, qr, message }) => {
+            const select = document.getElementById('session-select');
+            if (select && select.value === sessionId) {
+                handleSessionStateUI(sessionId, status, qr);
+            }
+        });
+
         async function switchSession(sessionId) {
-            document.getElementById('session-status').innerText = '● Beralih Akun...';
+            const statusEl = document.getElementById('session-status');
+            if (statusEl) statusEl.innerText = '● Beralih Akun...';
             try {
                 const res = await fetch('/api/sessions/switch', {
                     method: 'POST',
@@ -991,7 +1067,6 @@
         socket.on('new_message', ({ jid, sender }) => {
             if (selectedJid === jid) socket.emit('get_messages', jid);
 
-            // TAMBAH NOTIFIKASI TAB BAR JIKA PESAN MASUK DARI USER
             if (sender === 'User') {
                 if (document.hidden || selectedJid !== jid) {
                     unreadCount++;
@@ -1000,75 +1075,6 @@
             }
         });
 
-                /* FUNGSI LOAD SESSIONS DENGAN DETEKSI OTOMATIS BUTUH QR */
-        async function loadSessions() {
-            try {
-                const res = await fetch('/api/sessions');
-                const data = await res.json();
-                const select = document.getElementById('session-select');
-                if (!select) return;
-                select.innerHTML = '';
-
-                data.sessions.forEach(s => {
-                    const opt = document.createElement('option');
-                    opt.value = s;
-                    opt.innerText = s;
-                    if (s === data.activeSession) opt.selected = true;
-                    select.appendChild(opt);
-                });
-
-                // CEK STATUS AKUN AKTIF
-                handleSessionStateUI(data.activeSession, data.activeState, data.activeQr);
-            } catch (err) {
-                console.error('Gagal memuat daftar akun:', err);
-            }
-        }
-
-        // FUNGSI UNTUK MERUBAH TAMPILAN STATUS AKUN & MEMUNCULKAN WARNING/MODAL QR
-        function handleSessionStateUI(sessionId, status, qr) {
-            const statusEl = document.getElementById('session-status');
-            
-            if (status === 'NEED_QR') {
-                if (statusEl) {
-                    statusEl.innerText = '⚠️ Terputus (Butuh Scan QR)';
-                    statusEl.style.color = '#ef4444';
-                }
-                // Tampilkan Banner Peringatan
-                showApiAlert(`⚠️ Sesi akun '${sessionId}' terputus! Silakan scan QR Code kembali.`);
-                
-                // Jika ada QR code, otomatis buka modal scan QR
-                if (qr) {
-                    openAddAccountModal();
-                    document.getElementById('new-account-id').value = sessionId;
-                    document.getElementById('qr-container').style.display = 'flex';
-                    const qrBox = document.getElementById('qrcode-box');
-                    qrBox.innerHTML = '';
-                    new QRCode(qrBox, { text: qr, width: 200, height: 200 });
-                }
-            } else if (status === 'CONNECTED') {
-                if (statusEl) {
-                    statusEl.innerText = '● Terhubung';
-                    statusEl.style.color = '#00a884';
-                }
-                hideApiAlert();
-            } else if (status === 'DISCONNECTED') {
-                if (statusEl) {
-                    statusEl.innerText = '❌ Terputus';
-                    statusEl.style.color = '#ef4444';
-                }
-                showApiAlert(`❌ Akun '${sessionId}' terputus dari WhatsApp.`);
-            }
-        }
-
-        // LISTEN EVENT STATUS SESI DARI SERVER
-        socket.on('session_status_changed', ({ sessionId, status, qr, message }) => {
-            const select = document.getElementById('session-select');
-            if (select && select.value === sessionId) {
-                handleSessionStateUI(sessionId, status, qr);
-            }
-        });
-
-        /* MEMBALAS CHAT MANUAL TERMASUK ATTACH MEDIA */
         async function sendManualReply() {
             const input = document.getElementById('manual-msg');
             const message = input.value.trim();
@@ -1103,7 +1109,6 @@
             socket.emit('update_label', { jid, label });
         }
 
-        /* MODAL CHAT BARU */
         function openNewChatModal() {
             document.getElementById('new-chat-modal').style.display = 'flex';
         }
@@ -1142,19 +1147,27 @@
             }
         }
 
-        /* MENGIRIM BROADCAST DENGAN ATTACH MEDIA */
+        /* MENGIRIM BROADCAST DENGAN NAMA PENERIMA & ATTACH MEDIA */
         async function sendBroadcast() {
             const draft = document.getElementById('draft').value;
             const prompt = document.getElementById('prompt').value;
-            const numbers = document.getElementById('numbers').value.split('\n').filter(n => n.trim());
+            const rawLines = document.getElementById('numbers').value.split('\n').filter(n => n.trim());
             const scheduledTime = document.getElementById('schedule-time').value;
             const customKeys = document.getElementById('custom-keys').value;
             const fallbackMsg = document.getElementById('fallback-msg').value;
 
-            if (!draft || numbers.length === 0) {
+            if (!draft || rawLines.length === 0) {
                 alert('Draf pesan dan nomor tujuan wajib diisi!');
                 return;
             }
+
+            // Parse baris teks menjadi objek { phone, name }
+            const targets = rawLines.map(line => {
+                const parts = line.split(/[,|\t]/);
+                const phone = parts[0].trim();
+                const name = parts[1] ? parts[1].trim() : '';
+                return { phone, name };
+            });
 
             document.getElementById('bc-status').innerText = 'Mengolah AI & memproses broadcast...';
 
@@ -1172,7 +1185,7 @@
                 const res = await fetch('/api/broadcast', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ draft, prompt, numbers, scheduledTime, customKeys, fallbackMsg, media: mediaData })
+                    body: JSON.stringify({ draft, prompt, targets, scheduledTime, customKeys, fallbackMsg, media: mediaData })
                 });
                 const data = await res.json();
                 document.getElementById('bc-status').innerText = data.message;
@@ -1181,7 +1194,6 @@
             }
         }
 
-        /* FUNGSI LOAD & SAVE PENGATURAN PERSONA / KNOWLEDGE */
         async function loadSettings() {
             try {
                 const res = await fetch('/api/settings');
@@ -1217,7 +1229,6 @@
             }
         }
 
-        // Jalankan saat halaman selesai dimuat
         window.addEventListener('DOMContentLoaded', () => {
             loadSessions();
             loadSettings();
