@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WhatsApp Web Admin & Broadcast Studio</title>
     <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <style>
         * { 
             box-sizing: border-box; 
@@ -19,6 +20,108 @@
             height: 100vh; 
             display: flex; 
             flex-direction: column; 
+        }
+
+        /* BARIS KONTROL MANAJEMEN AKUN & AI TOGGLE */
+        .account-bar {
+            background-color: #202c33;
+            padding: 10px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #2a3942;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .account-selector {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .account-selector select {
+            background: #111b21;
+            color: #00a884;
+            border: 1px solid #00a884;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-weight: bold;
+            outline: none;
+            cursor: pointer;
+        }
+
+        .btn-add-account {
+            background-color: #00a884;
+            color: #111b21;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: background-color 0.2s ease;
+        }
+
+        .btn-add-account:hover {
+            background-color: #029071;
+        }
+
+        /* STYLES UNTUK TOGGLE SAKELAR AI */
+        .ai-control-group {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .ai-status-badge {
+            font-size: 0.82rem;
+            font-weight: bold;
+            padding: 5px 12px;
+            border-radius: 20px;
+            transition: all 0.3s ease;
+        }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 22px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #ef4444;
+            transition: .3s;
+            border-radius: 22px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 16px;
+            width: 16px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: #10b981;
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(22px);
         }
         
         /* BANNER PERINGATAN API LIMIT */
@@ -91,7 +194,7 @@
         .tab-content { 
             display: none; 
             flex: 1; 
-            height: calc(100vh - 53px); 
+            height: calc(100vh - 100px); 
         }
 
         .tab-content.active { 
@@ -301,7 +404,7 @@
             width: 100%; 
         }
 
-        /* MODAL POP-UP MULAI CHAT BARU */
+        /* MODAL POP-UP OVERLAYS */
         .modal-overlay {
             display: none; 
             position: fixed; 
@@ -309,7 +412,7 @@
             left: 0; 
             width: 100%; 
             height: 100%;
-            background-color: rgba(0, 0, 0, 0.7); 
+            background-color: rgba(0, 0, 0, 0.75); 
             justify-content: center; 
             align-items: center; 
             z-index: 1000;
@@ -376,13 +479,31 @@
 </head>
 <body>
 
-    <!-- BANNER WARNING API LIMIT -->
     <div id="api-limit-alert" class="alert-banner">
         <span id="alert-text">⚠️ PERINGATAN: Semua API Key Gemini Limit/Error! Sistem beralih ke Pesan Fallback.</span>
         <button onclick="hideApiAlert()">✕</button>
     </div>
 
-    <!-- NAV TABS MENU -->
+    <div class="account-bar">
+        <div class="account-selector">
+            <span style="font-size: 0.85rem; color: #8696a0; font-weight: bold;">AKUN WA AKTIF:</span>
+            <select id="session-select" onchange="switchSession(this.value)">
+                <option value="default">default</option>
+            </select>
+            <button class="btn-add-account" onclick="openAddAccountModal()">+ Tambah Akun / Pendaftaran Baru</button>
+        </div>
+
+        <div class="ai-control-group">
+            <div id="ai-status-badge" class="ai-status-badge" style="background-color: #10b981; color: #000;">
+                🤖 AI CS: ONLINE (ON)
+            </div>
+            <label class="switch">
+                <input type="checkbox" id="ai-toggle-checkbox" onchange="toggleAiGlobal(this.checked)">
+                <span class="slider"></span>
+            </label>
+        </div>
+    </div>
+
     <div class="nav-tabs">
         <div class="tab-group">
             <button class="tab-btn active" onclick="switchTab('chat')">💬 Live Chat Panel</button>
@@ -392,7 +513,6 @@
         <button class="btn-export" onclick="window.location.href='/api/export-contacts'">📥 Export Contacts CSV</button>
     </div>
 
-    <!-- TAB 1: LIVE CHAT PANEL -->
     <div id="tab-chat" class="tab-content active">
         <div class="chat-sidebar">
             <div class="sidebar-header">
@@ -414,7 +534,6 @@
         </div>
     </div>
 
-    <!-- TAB 2: BROADCAST STUDIO -->
     <div id="tab-broadcast" class="tab-content">
         <div class="broadcast-container">
             <h2 style="margin-bottom: 20px; color: #00a884;">Broadcast AI Studio</h2>
@@ -424,13 +543,11 @@
                 <textarea id="draft" rows="3" placeholder="Contoh: Halo Kak! Ada diskon khusus hari ini."></textarea>
             </div>
 
-            <!-- GAYA BAHASA AI PROMPT (EXPANDABLE TEXTAREA) -->
             <div class="form-group">
                 <label>Gaya Bahasa AI Prompt (Instruksi Khusus AI)</label>
                 <textarea id="prompt" rows="3" placeholder="Contoh: Buat ramah, kasual, selipkan emoticon, dan ajak pembeli balas pesan ini."></textarea>
             </div>
 
-            <!-- FORM EXPANDABLE: PENGATURAN API & FALLBACK -->
             <details style="background: #202c33; border: 1px solid #2a3942; border-radius: 6px; padding: 12px; margin-bottom: 15px;">
                 <summary style="font-weight: bold; color: #00a884; font-size: 0.85rem; cursor: pointer;">⚙️ Pengaturan AI Lanjutan (Cadangan API Keys & Fallback)</summary>
                 <div style="margin-top: 15px; display: flex; flex-direction: column; gap: 12px;">
@@ -459,7 +576,6 @@
         </div>
     </div>
 
-    <!-- TAB 3: PERSONA CS & KNOWLEDGE BASE -->
     <div id="tab-settings" class="tab-content">
         <div class="broadcast-container" style="max-width: 750px;">
             <h2 style="margin-bottom: 20px; color: #00a884;">🧠 Pengaturan Persona & Knowledge Base</h2>
@@ -481,7 +597,6 @@
         </div>
     </div>
 
-    <!-- MODAL POP-UP MULAI CHAT BARU -->
     <div class="modal-overlay" id="new-chat-modal">
         <div class="modal-box">
             <div class="modal-header">
@@ -503,10 +618,156 @@
         </div>
     </div>
 
+    <div class="modal-overlay" id="add-account-modal">
+        <div class="modal-box" style="text-align: center;">
+            <div class="modal-header">
+                <h3>➕ Pendaftaran Akun WA Baru</h3>
+                <button class="modal-close" onclick="closeAddAccountModal()">✕</button>
+            </div>
+            <div class="form-group" style="text-align: left;">
+                <label>Nama/ID Akun Baru (Misal: CS_Toko_2 atau Nomor WA)</label>
+                <input type="text" id="new-account-id" placeholder="Contoh: akun_cadangan_1">
+            </div>
+            <button class="btn-action" onclick="createAccount()">Buat & Minta QR Code</button>
+            
+            <div id="qr-container" style="margin-top: 20px; display: none; flex-direction: column; align-items: center; justify-content: center;">
+                <p style="font-size: 0.85rem; color: #8696a0; margin-bottom: 10px;">Scan QR Code ini menggunakan aplikasi WhatsApp di HP kamu:</p>
+                <div id="qrcode-box" style="background: white; padding: 10px; border-radius: 8px; display: inline-block;"></div>
+            </div>
+        </div>
+    </div>
+
     <script>
         const socket = io();
         let selectedJid = null;
         let contactsData = [];
+
+        /* FUNGSI KONTROL AI ADMIN GLOBAL (ON / OFF) */
+        async function loadAiStatus() {
+            try {
+                const res = await fetch('/api/ai-toggle');
+                const data = await res.json();
+                updateAiStatusUI(data.aiStatus);
+            } catch (err) {
+                console.error('Gagal memuat status AI:', err);
+            }
+        }
+
+        async function toggleAiGlobal(isChecked) {
+            const status = isChecked ? 'ON' : 'OFF';
+            try {
+                const res = await fetch('/api/ai-toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status })
+                });
+                const data = await res.json();
+                updateAiStatusUI(data.aiStatus);
+            } catch (err) {
+                alert('Gagal mengubah status AI.');
+            }
+        }
+
+        function updateAiStatusUI(status) {
+            const badge = document.getElementById('ai-status-badge');
+            const checkbox = document.getElementById('ai-toggle-checkbox');
+            
+            if (status === 'ON') {
+                badge.innerText = '🤖 AI CS: ONLINE (ON)';
+                badge.style.backgroundColor = '#10b981';
+                badge.style.color = '#000';
+                if (checkbox) checkbox.checked = true;
+            } else {
+                badge.innerText = '⏸️ AI CS: OFF (MANUAL MODE)';
+                badge.style.backgroundColor = '#ef4444';
+                badge.style.color = '#fff';
+                if (checkbox) checkbox.checked = false;
+            }
+        }
+
+        socket.on('ai_status_changed', ({ aiStatus }) => {
+            updateAiStatusUI(aiStatus);
+        });
+
+        /* FUNGSI MANAJEMEN MULTI AKUN / SESSIONS */
+        async function loadSessions() {
+            try {
+                const res = await fetch('/api/sessions');
+                const data = await res.json();
+                const select = document.getElementById('session-select');
+                if (!select) return;
+                select.innerHTML = '';
+
+                data.sessions.forEach(s => {
+                    const opt = document.createElement('option');
+                    opt.value = s;
+                    opt.innerText = s;
+                    if (s === data.activeSession) opt.selected = true;
+                    select.appendChild(opt);
+                });
+            } catch (err) {
+                console.error('Gagal memuat daftar akun:', err);
+            }
+        }
+
+        async function switchSession(sessionId) {
+            document.getElementById('session-status').innerText = '● Beralih Akun...';
+            try {
+                const res = await fetch('/api/sessions/switch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionId })
+                });
+                const data = await res.json();
+                alert(data.message);
+                location.reload();
+            } catch (err) {
+                alert('Gagal beralih akun.');
+            }
+        }
+
+        function openAddAccountModal() {
+            document.getElementById('add-account-modal').style.display = 'flex';
+        }
+
+        function closeAddAccountModal() {
+            document.getElementById('add-account-modal').style.display = 'none';
+            document.getElementById('qr-container').style.display = 'none';
+            document.getElementById('qrcode-box').innerHTML = '';
+            document.getElementById('new-account-id').value = '';
+        }
+
+        async function createAccount() {
+            const sessionId = document.getElementById('new-account-id').value.trim();
+            if (!sessionId) return alert('Nama/ID Akun wajib diisi!');
+
+            try {
+                const res = await fetch('/api/sessions/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionId })
+                });
+                const data = await res.json();
+                document.getElementById('qr-container').style.display = 'flex';
+                document.getElementById('qrcode-box').innerHTML = 'Menunggu QR Code dari Server...';
+            } catch (err) {
+                alert('Gagal membuat akun baru.');
+            }
+        }
+
+        socket.on('qr_code', ({ qr }) => {
+            const qrBox = document.getElementById('qrcode-box');
+            if (qrBox) {
+                qrBox.innerHTML = '';
+                new QRCode(qrBox, { text: qr, width: 200, height: 200 });
+            }
+        });
+
+        socket.on('session_ready', ({ sessionId }) => {
+            alert(`Akun '${sessionId}' Berhasil Terhubung!`);
+            closeAddAccountModal();
+            location.reload();
+        });
 
         function showApiAlert(msg) {
             const banner = document.getElementById('api-limit-alert');
@@ -731,8 +992,12 @@
             }
         }
 
-        // Muat data pengaturan saat halaman selesai dibuka
-        window.addEventListener('DOMContentLoaded', loadSettings);
+        // Jalankan saat halaman selesai dimuat
+        window.addEventListener('DOMContentLoaded', () => {
+            loadSessions();
+            loadSettings();
+            loadAiStatus();
+        });
     </script>
 </body>
 </html>
