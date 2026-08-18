@@ -26,7 +26,7 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(express.static('public'));
 
 // ===================================================
-// DEKLARASI VARIABEL GLOBAL & STATE MANAGER (DI ATAS)
+// DEKLARASI VARIABEL GLOBAL & STATE MANAGER
 // ===================================================
 const sessions = {}; 
 const sessionStates = {}; // Track status: 'CONNECTED', 'NEED_QR', 'DISCONNECTED'
@@ -82,7 +82,7 @@ async function generateMultimodalDinamis(contents, customKeysStr = '', fallbackT
     return defaultFallback;
 }
 
-// INISIALISASI WA CLIENT PER SESI (HANYA 1 FUNGSI)
+// INISIALISASI WA CLIENT PER SESI
 function initWhatsAppClient(sessionId) {
     if (sessions[sessionId]) {
         return sessions[sessionId];
@@ -144,11 +144,22 @@ function initWhatsAppClient(sessionId) {
         io.emit('session_error', { sessionId, message: 'Gagal otentikasi!' });
     });
 
-    client.on('disconnected', (reason) => {
+    client.on('disconnected', async (reason) => {
         console.warn(`[SESSION DISCONNECTED] '${sessionId}' terputus. Alasan:`, reason);
-        delete sessions[sessionId];
+        
         sessionStates[sessionId] = 'DISCONNECTED';
         currentQrCodes[sessionId] = null;
+        const oldClient = sessions[sessionId];
+        delete sessions[sessionId];
+
+        // Hancurkan browser puppeteer lama agar tidak terjadi bentrokan binding pada re-initialization
+        if (oldClient) {
+            try {
+                await oldClient.destroy();
+            } catch (errDestroy) {
+                console.error(`[DESTROY ERROR] ${sessionId}:`, errDestroy.message);
+            }
+        }
 
         io.emit('session_disconnected', { sessionId, reason });
         io.emit('session_status_changed', { 
@@ -172,19 +183,25 @@ function initWhatsAppClient(sessionId) {
         if (cekToxic(text)) {
             db.setToxic(jid, 1);
             db.setHandover(jid, 1);
-            await msg.reply('Mohon gunakan bahasa yang sopan ya Kak. Percakapan ini kami alihkan ke Admin.');
+            try {
+                await msg.reply('Mohon gunakan bahasa yang sopan ya Kak. Percakapan ini kami alihkan ke Admin.');
+            } catch (e) {}
             io.emit('contacts_updated', db.getAllContacts());
             return;
         }
 
         let promptContents = [];
         if (msg.hasMedia) {
-            const media = await msg.downloadMedia();
-            if (media) {
-                promptContents.push({
-                    inlineData: { data: media.data, mimeType: media.mimetype }
-                });
-                text = text || '[Penerimaan Media/Gambar/Voice Note]';
+            try {
+                const media = await msg.downloadMedia();
+                if (media) {
+                    promptContents.push({
+                        inlineData: { data: media.data, mimeType: media.mimetype }
+                    });
+                    text = text || '[Penerimaan Media/Gambar/Voice Note]';
+                }
+            } catch (e) {
+                console.warn('Gagal mengunduh media dari pengguna:', e.message);
             }
         }
 
@@ -194,13 +211,13 @@ function initWhatsAppClient(sessionId) {
 
         if (text.toUpperCase() === 'STOP' || text.toUpperCase() === 'BERHENTI') {
             db.setBlacklist(jid, true);
-            await msg.reply('Nomor Anda berhasil dihapus dari daftar broadcast.');
+            try { await msg.reply('Nomor Anda berhasil dihapus dari daftar broadcast.'); } catch (e) {}
             return;
         }
 
         if (text.toLowerCase().includes('admin') || text.toLowerCase().includes('human')) {
             db.setHandover(jid, true);
-            await msg.reply('Pesan diteruskan ke Admin Manusia.');
+            try { await msg.reply('Pesan diteruskan ke Admin Manusia.'); } catch (e) {}
             io.emit('contacts_updated', db.getAllContacts());
             return;
         }
@@ -216,13 +233,14 @@ function initWhatsAppClient(sessionId) {
         }
 
         try {
-            try {
-                const chat = await msg.getChat();
-                if (chat) await chat.sendStateTyping();
-            } catch (e) {}
+            if (!msg.from.endsWith('@lid')) {
+                try {
+                    const chat = await msg.getChat();
+                    if (chat) await chat.sendStateTyping();
+                } catch (e) {}
+            }
 
             const riwayatChat = db.getMessages(jid).slice(-6);
-
             const currentPersona = db.getSetting('persona_prompt') || DEFAULT_PERSONA;
             const currentKnowledge = db.getSetting('knowledge_base') || DEFAULT_KNOWLEDGE;
 
@@ -247,7 +265,9 @@ Pembeli: ${text}`;
             await msg.reply(jawabanAI);
             db.saveMessage(jid, 'Bot', jawabanAI);
             io.emit('new_message', { jid, sender: 'Bot', message: jawabanAI });
-        } catch (err) {}
+        } catch (err) {
+            console.error('Error memproses jawaban AI:', err.message || err);
+        }
     });
 
     client.initialize();
@@ -267,9 +287,12 @@ io.on('connection', (socket) => {
     socket.on('get_contacts', () => socket.emit('contacts_list', db.getAllContacts()));
     socket.on('get_messages', (jid) => socket.emit('messages_list', { jid, messages: db.getMessages(jid) }));
     
-    // PEMBALASAN MANUAL DENGAN DUKUNGAN ATTACH MEDIA
     socket.on('send_manual_reply', async ({ jid, message, media }) => {
         try {
+            if (sessionStates[activeSessionId] !== 'CONNECTED') {
+                console.warn('Gagal kirim balasan manual: Akun belum CONNECTED.');
+                return;
+            }
             const client = getActiveClient();
             if (media && media.data) {
                 const mediaObj = new MessageMedia(media.mimetype, media.data, media.filename);
@@ -283,7 +306,7 @@ io.on('connection', (socket) => {
                 io.emit('new_message', { jid, sender: 'Admin', message });
             }
         } catch (err) {
-            console.error('Error pengiriman balasan manual:', err);
+            console.error('Error pengiriman balasan manual:', err.message || err);
         }
     });
 
@@ -298,7 +321,7 @@ io.on('connection', (socket) => {
     });
 });
 
-// ENDPOINT TOGGLE AI ADMIN GLOBAL (ON / OFF)
+// ENDPOINT TOGGLE AI ADMIN GLOBAL
 app.get('/api/ai-toggle', (req, res) => {
     const status = db.getSetting('ai_status') || 'ON';
     res.json({ aiStatus: status });
@@ -333,7 +356,7 @@ app.get('/api/sessions', (req, res) => {
     });
 });
 
-app.post('/api/sessions/switch', (req, res) => {
+app.post('/api/sessions/switch', async (req, res) => {
     const { sessionId } = req.body;
     if (!sessionId) return res.status(400).json({ success: false, message: 'Session ID wajib diisi' });
 
@@ -345,7 +368,7 @@ app.post('/api/sessions/switch', (req, res) => {
     res.json({ success: true, message: `Berhasil beralih ke akun '${sessionId}'`, activeSession: activeSessionId });
 });
 
-app.post('/api/sessions/create', (req, res) => {
+app.post('/api/sessions/create', async (req, res) => {
     const { sessionId } = req.body;
     const cleanId = sessionId.trim().replace(/[^a-zA-Z0-9_-]/g, '');
 
@@ -357,6 +380,36 @@ app.post('/api/sessions/create', (req, res) => {
     initWhatsAppClient(cleanId);
 
     res.json({ success: true, message: `Akun baru '${cleanId}' dibuat. Silakan scan QR Code!`, activeSession: cleanId });
+});
+
+// ENDPOINT RE-LOGIN / RECONNECT AKUN
+app.post('/api/sessions/reconnect', async (req, res) => {
+    const { sessionId } = req.body;
+    if (!sessionId) return res.status(400).json({ success: false, message: 'Session ID wajib diisi' });
+
+    console.log(`[RECONNECT] Memulai ulang sesi '${sessionId}'...`);
+
+    // Hancurkan client lama jika masih menggantung
+    if (sessions[sessionId]) {
+        try {
+            await sessions[sessionId].destroy();
+        } catch (e) {
+            console.error(`[DESTROY FAIL] ${sessionId}:`, e.message);
+        }
+        delete sessions[sessionId];
+    }
+
+    activeSessionId = sessionId;
+    db.saveSetting('active_session_id', sessionId);
+    sessionStates[sessionId] = 'CONNECTING';
+
+    // Inisialisasi ulang client (akan memicu pendaftaran QR Code baru)
+    initWhatsAppClient(sessionId);
+
+    res.json({ 
+        success: true, 
+        message: `Menghubungkan ulang akun '${sessionId}'... Silakan scan QR Code yang muncul.` 
+    });
 });
 
 // EXPORT CONTACTS CSV
@@ -372,6 +425,10 @@ app.get('/api/export-contacts', (req, res) => {
 // MEMULAI CHAT BARU
 app.post('/api/new-chat', async (req, res) => {
     try {
+        if (sessionStates[activeSessionId] !== 'CONNECTED') {
+            return res.status(400).json({ success: false, message: 'Akun WhatsApp belum terhubung/CONNECTED!' });
+        }
+
         const { phone, message } = req.body;
         let formattedPhone = phone.trim().replace(/[^0-9]/g, '');
         
@@ -379,14 +436,14 @@ app.post('/api/new-chat', async (req, res) => {
             formattedPhone = '62' + formattedPhone.slice(1);
         }
         
-        const jid = `${formattedPhone}@c.us`;
         const client = getActiveClient();
-
-        const isRegistered = await client.isRegisteredUser(jid);
-        if (!isRegistered) {
+        const numberDetails = await client.getNumberId(formattedPhone);
+        
+        if (!numberDetails || !numberDetails._serialized) {
             return res.status(400).json({ success: false, message: 'Nomor tidak terdaftar di WhatsApp!' });
         }
 
+        const jid = numberDetails._serialized;
         await client.sendMessage(jid, message);
 
         db.saveContact(jid, formattedPhone);
@@ -416,10 +473,27 @@ app.post('/api/settings', (req, res) => {
 
 // API BROADCAST MASSAL
 app.post('/api/broadcast', async (req, res) => {
-    const { draft, prompt, numbers, scheduledTime, customKeys, fallbackMsg, media } = req.body;
+    if (sessionStates[activeSessionId] !== 'CONNECTED') {
+        return res.status(400).json({ success: false, message: 'Akun WhatsApp belum terhubung/CONNECTED! Mohon scan QR atau tunggu hingga terhubung.' });
+    }
+
+    const { draft, prompt, targets, numbers, scheduledTime, customKeys, fallbackMsg, media } = req.body;
     
+    let rawList = targets || numbers || [];
+    let listTargets = rawList.map(item => {
+        if (!item) return null;
+        if (typeof item === 'string') {
+            const parts = item.split(/[,|\t]/);
+            return { phone: parts[0] ? parts[0].trim() : '', name: parts[1] ? parts[1].trim() : '' };
+        }
+        if (typeof item === 'object' && item !== null) {
+            return { phone: item.phone ? String(item.phone).trim() : '', name: item.name ? String(item.name).trim() : '' };
+        }
+        return null;
+    }).filter(item => item && item.phone);
+
     if (scheduledTime) {
-        db.saveScheduledBroadcast(draft, prompt, JSON.stringify(numbers), scheduledTime);
+        db.saveScheduledBroadcast(draft, prompt, JSON.stringify(listTargets), scheduledTime);
         return res.json({ message: 'Broadcast berhasil dijadwalkan!' });
     }
     
@@ -433,14 +507,42 @@ app.post('/api/broadcast', async (req, res) => {
         mediaObj = new MessageMedia(media.mimetype, media.data, media.filename);
     }
 
-    for (let target of numbers) {
-        let jid = target.trim();
-        if (!jid.endsWith('@c.us')) jid = `${jid}@c.us`;
-        
+    for (let targetObj of listTargets) {
+        let phone = targetObj.phone;
+        let name = targetObj.name;
+
+        let cleaned = phone.replace(/[^0-9]/g, '');
+        if (!cleaned) continue;
+
+        if (cleaned.startsWith('0')) cleaned = '62' + cleaned.slice(1);
+
+        let jid = `${cleaned}@c.us`;
+        try {
+            const numberDetails = await client.getNumberId(cleaned);
+            if (numberDetails && numberDetails._serialized) {
+                jid = numberDetails._serialized;
+            } else {
+                console.warn(`[BROADCAST SKIP] Nomor ${phone} (${cleaned}) tidak terdaftar di WA.`);
+                continue;
+            }
+        } catch (errCheck) {
+            console.warn(`[NUMBER CHECK NOTICE] ${cleaned}:`, errCheck.message || errCheck);
+            if (cleaned.length >= 10) {
+                jid = `${cleaned}@c.us`;
+            } else {
+                continue;
+            }
+        }
+
         const contact = db.getContact(jid);
         if (contact && contact.is_blacklisted) continue;
 
-        const promptBroadcast = prompts.getBroadcastPrompt(draft, prompt);
+        const promptBroadcast = `Draf Utama: ${draft}
+Gaya/Instruksi Tambahan: ${prompt || 'Buat ramah, bersahabat, dan selipkan emoticon.'}
+Nama Penerima Pesan: ${name ? name : 'Pelanggan'}
+
+Tugas AI: Tulis ulang Draf Utama menjadi pesan broadcast WhatsApp yang unik dan bervariasi. ${name ? `Sapa penerima secara personal dengan nama "${name}" secara alami di dalam kalimat.` : 'Gunakan sapaan umum yang ramah seperti Kak.'}`;
+
         const pesanUnik = await generateMultimodalDinamis(promptBroadcast, customKeys || '', fallbackMsg || draft);
 
         try {
@@ -450,11 +552,12 @@ app.post('/api/broadcast', async (req, res) => {
                 await client.sendMessage(jid, pesanUnik);
             }
             const logText = mediaObj ? `[Media: ${media.filename}] ${pesanUnik}` : pesanUnik;
-            db.saveContact(jid, target.trim());
-            db.saveMessage(jid, 'Bot', logText);
+            db.saveContact(jid, phone, name);
+            db.saveMessage(jid, 'Bot', pesanUnik);
             io.emit('new_message', { jid, sender: 'Bot', message: logText });
+            console.log(`[BROADCAST SUCCESS] Terkirim ke ${jid}`);
         } catch (e) {
-            console.error('Error broadcast target:', e);
+            console.error(`Error broadcast target (${phone}):`, e.message || e);
         }
 
         counter++;
@@ -472,29 +575,65 @@ app.post('/api/broadcast', async (req, res) => {
 
 // CRON SCHEDULER
 cron.schedule('* * * * *', async () => {
+    if (sessionStates[activeSessionId] !== 'CONNECTED') return;
+
     const pending = db.getPendingBroadcasts();
     if (pending.length === 0) return;
 
     const client = getActiveClient();
     for (let job of pending) {
-        const numbers = JSON.parse(job.numbers);
+        const rawTargets = JSON.parse(job.numbers);
+        let listTargets = rawTargets.map(item => {
+            if (!item) return null;
+            if (typeof item === 'string') {
+                const parts = item.split(/[,|\t]/);
+                return { phone: parts[0] ? parts[0].trim() : '', name: parts[1] ? parts[1].trim() : '' };
+            }
+            if (typeof item === 'object' && item !== null) {
+                return { phone: item.phone ? String(item.phone).trim() : '', name: item.name ? String(item.name).trim() : '' };
+            }
+            return null;
+        }).filter(item => item && item.phone);
+
         let counter = 0;
-        for (let target of numbers) {
-            let jid = target.trim();
-            if (!jid.endsWith('@c.us')) jid = `${jid}@c.us`;
+        for (let targetObj of listTargets) {
+            let phone = targetObj.phone;
+            let name = targetObj.name;
+
+            let cleaned = phone.replace(/[^0-9]/g, '');
+            if (!cleaned) continue;
+
+            if (cleaned.startsWith('0')) cleaned = '62' + cleaned.slice(1);
+
+            let jid = `${cleaned}@c.us`;
+            try {
+                const numberDetails = await client.getNumberId(cleaned);
+                if (numberDetails && numberDetails._serialized) {
+                    jid = numberDetails._serialized;
+                } else {
+                    continue;
+                }
+            } catch (e) {}
 
             const contact = db.getContact(jid);
             if (contact && contact.is_blacklisted) continue;
 
-            const promptBroadcast = prompts.getBroadcastPrompt(job.draft, job.prompt);
+            const promptBroadcast = `Draf Utama: ${job.draft}
+Gaya/Instruksi Tambahan: ${job.prompt || 'Buat ramah, bersahabat, dan selipkan emoticon.'}
+Nama Penerima Pesan: ${name ? name : 'Pelanggan'}
+
+Tugas AI: Tulis ulang Draf Utama menjadi pesan broadcast WhatsApp yang unik dan bervariasi. ${name ? `Sapa penerima secara personal dengan nama "${name}" secara alami di dalam kalimat.` : 'Gunakan sapaan umum yang ramah seperti Kak.'}`;
+
             const pesanUnik = await generateMultimodalDinamis(promptBroadcast, '', job.draft);
 
             try {
                 await client.sendMessage(jid, pesanUnik);
-                db.saveContact(jid, target.trim());
+                db.saveContact(jid, phone, name);
                 db.saveMessage(jid, 'Bot', pesanUnik);
                 io.emit('new_message', { jid, sender: 'Bot', message: pesanUnik });
-            } catch (e) {}
+            } catch (e) {
+                console.error(`Error cron broadcast (${phone}):`, e.message || e);
+            }
 
             counter++;
             if (counter % 10 === 0) {
